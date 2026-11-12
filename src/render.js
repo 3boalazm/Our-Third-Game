@@ -1,9 +1,11 @@
 import { KartScale, Physics, angleDiff } from "./game.js";
 import { createParticles } from "./particles.js";
+import { createScenery, drawScenery } from "./scenery.js";
 import { viewport } from "./layout.js";
 
 const Grass = "#4a9a52";
-const GrassLine = "rgba(0, 0, 0, 0.07)";
+const GrassLine = "rgba(0, 0, 0, 0.06)";
+const MaxMarks = 850;
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext("2d");
@@ -19,6 +21,16 @@ export function createRenderer(canvas) {
   let maxDpr = 2;
   let shakeAmount = 0;
   let boostVisual = 0;
+  let clock = 0;
+  let boostGradient = null;
+
+  // tyre marks are kept in a fixed ring buffer, in world pixels
+  const marks = Array.from({ length: MaxMarks }, () => ({ x1: 0, y1: 0, x2: 0, y2: 0, kind: 0 }));
+  let markCursor = 0;
+  let markCount = 0;
+
+  // one offscreen canvas per track, holding the grass texture and the scenery
+  let layer = null;
 
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
@@ -28,8 +40,68 @@ export function createRenderer(canvas) {
     canvas.height = Math.round(height * dpr);
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
+    const cx = width / 2;
+    const cy = height / 2;
+    const reach = Math.max(width, height) * 0.72;
+    boostGradient = ctx.createRadialGradient(cx, cy, Math.min(width, height) * 0.18, cx, cy, reach);
+    boostGradient.addColorStop(0, "rgba(120, 210, 255, 0)");
+    boostGradient.addColorStop(0.62, "rgba(90, 190, 255, 0.12)");
+    boostGradient.addColorStop(1, "rgba(70, 170, 255, 0.5)");
   }
   resize();
+
+  // Build the static layer for a track once: grass patches, trees, stands.
+  function ensureLayer(track) {
+    if (layer && layer.id === track.def.id) {
+      return layer;
+    }
+    const scenery = createScenery(track);
+    const margin = 700;
+    const b = track.bounds;
+    const worldW = b.maxX - b.minX + margin * 2;
+    const worldH = b.maxY - b.minY + margin * 2;
+    const scale = Math.min(0.6, 2200 / Math.max(worldW, worldH));
+    const off = document.createElement("canvas");
+    off.width = Math.ceil(worldW * scale);
+    off.height = Math.ceil(worldH * scale);
+    const lc = off.getContext("2d");
+    lc.scale(scale, scale);
+    lc.translate(-(b.minX - margin), -(b.minY - margin));
+
+    // soft light and shade so the grass is not one flat colour
+    let seed = 1234567;
+    const rnd = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    for (let i = 0; i < 260; i += 1) {
+      const x = b.minX - margin + rnd() * worldW;
+      const y = b.minY - margin + rnd() * worldH;
+      const r = 22 + rnd() * 72;
+      lc.fillStyle = rnd() < 0.5 ? "rgba(255, 255, 255, 0.028)" : "rgba(0, 40, 12, 0.034)";
+      lc.beginPath();
+      lc.ellipse(x, y, r, r * (0.5 + rnd() * 0.5), rnd() * Math.PI, 0, Math.PI * 2);
+      lc.fill();
+    }
+    // a few tiny flowers, just enough to break up the green
+    for (let i = 0; i < 220; i += 1) {
+      const x = b.minX - margin + rnd() * worldW;
+      const y = b.minY - margin + rnd() * worldH;
+      lc.fillStyle = rnd() < 0.55 ? "rgba(255, 248, 190, 0.5)" : "rgba(255, 255, 255, 0.38)";
+      lc.beginPath();
+      lc.arc(x, y, 1.4 + rnd() * 1.8, 0, Math.PI * 2);
+      lc.fill();
+    }
+    drawScenery(lc, scenery);
+    layer = { id: track.def.id, canvas: off, x: b.minX - margin, y: b.minY - margin, w: worldW, h: worldH };
+    return layer;
+  }
+
+  function resetMarks(karts) {
+    markCursor = 0;
+    markCount = 0;
+    for (const kart of karts ?? []) kart.__marks = null;
+  }
 
   function drawTrack(track) {
     const w = track.def.width;
@@ -68,6 +140,37 @@ export function createRenderer(canvas) {
     ctx.restore();
   }
 
+  // Glowing chevrons across the road. A pulse runs along them towards the
+  // direction of travel, so the pad reads from a distance.
+  function drawPads(track) {
+    for (const pad of track.pads ?? []) {
+      ctx.save();
+      ctx.translate(pad.x, pad.y);
+      ctx.rotate(Math.atan2(pad.ty, pad.tx));
+      const pulse = 0.55 + 0.45 * Math.sin(clock * 4 + pad.idx);
+      ctx.fillStyle = `rgba(70, 190, 255, ${0.13 + pulse * 0.12})`;
+      ctx.beginPath();
+      ctx.roundRect(-pad.length / 2, -pad.half, pad.length, pad.half * 2, 16);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(150, 225, 255, ${0.35 + pulse * 0.4})`;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.lineCap = "round";
+      for (let i = 0; i < 3; i += 1) {
+        const x = -pad.length / 2 + 24 + i * 34 + (clock * 34) % 34;
+        if (x > pad.length / 2 - 12) continue;
+        ctx.strokeStyle = `rgba(215, 245, 255, ${0.35 + pulse * 0.45})`;
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.moveTo(x - 12, -pad.half * 0.55);
+        ctx.lineTo(x + 2, 0);
+        ctx.lineTo(x - 12, pad.half * 0.55);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   function drawKart(kart, isMe) {
     ctx.save();
     ctx.translate(kart.x, kart.y);
@@ -90,6 +193,15 @@ export function createRenderer(canvas) {
       ctx.moveTo(-23, -6);
       ctx.lineTo(-24 - 22 - flicker, 0);
       ctx.lineTo(-23, 6);
+      ctx.closePath();
+      ctx.fill();
+    } else if (kart.boostTimer > 0) {
+      const flicker = 4 + Math.random() * 5;
+      ctx.fillStyle = "rgba(140, 220, 255, 0.75)";
+      ctx.beginPath();
+      ctx.moveTo(-23, -5);
+      ctx.lineTo(-30 - flicker, 0);
+      ctx.lineTo(-23, 5);
       ctx.closePath();
       ctx.fill();
     }
@@ -118,6 +230,7 @@ export function createRenderer(canvas) {
   }
 
   function drawName(kart) {
+    if (!kart.name) return;
     ctx.save();
     ctx.translate(kart.x, kart.y);
     // keep the text upright even though the whole world is turned by the chase camera
@@ -129,6 +242,68 @@ export function createRenderer(canvas) {
     ctx.strokeText(kart.name, 0, -30 * KartScale);
     ctx.fillStyle = "#fff";
     ctx.fillText(kart.name, 0, -30 * KartScale);
+    ctx.restore();
+  }
+
+  // Leave two dark lines behind a kart that is sliding or on the grass.
+  function rememberMarks(karts) {
+    for (const kart of karts) {
+      const laying =
+        (kart.drifting && kart.speed > 150) || (kart.offRoad && kart.speed > 120);
+      const cos = Math.cos(kart.a);
+      const sin = Math.sin(kart.a);
+      const rear = 20 * KartScale;
+      const wheel = 10 * KartScale;
+      const lx = kart.x - cos * rear - sin * wheel;
+      const ly = kart.y - sin * rear + cos * wheel;
+      const rx = kart.x - cos * rear + sin * wheel;
+      const ry = kart.y - sin * rear - cos * wheel;
+      const prev = kart.__marks;
+      if (laying && prev) {
+        const jump = Math.hypot(lx - prev.lx, ly - prev.ly);
+        if (jump > 1.5 && jump < 80) {
+          const mark = marks[markCursor];
+          markCursor = (markCursor + 1) % MaxMarks;
+          markCount = Math.min(MaxMarks, markCount + 1);
+          mark.x1 = prev.lx;
+          mark.y1 = prev.ly;
+          mark.x2 = lx;
+          mark.y2 = ly;
+          mark.kind = kart.offRoad ? 1 : 0;
+          const mark2 = marks[markCursor];
+          markCursor = (markCursor + 1) % MaxMarks;
+          markCount = Math.min(MaxMarks, markCount + 1);
+          mark2.x1 = prev.rx;
+          mark2.y1 = prev.ry;
+          mark2.x2 = rx;
+          mark2.y2 = ry;
+          mark2.kind = kart.offRoad ? 1 : 0;
+        }
+        kart.__marks = { lx, ly, rx, ry };
+      } else if (laying) {
+        kart.__marks = { lx, ly, rx, ry };
+      } else {
+        kart.__marks = null;
+      }
+    }
+  }
+
+  function drawMarks() {
+    if (markCount === 0) return;
+    ctx.save();
+    ctx.lineCap = "round";
+    for (const kind of [0, 1]) {
+      ctx.strokeStyle = kind === 0 ? "rgba(22, 22, 28, 0.2)" : "rgba(56, 42, 22, 0.18)";
+      ctx.lineWidth = kind === 0 ? 7 : 8;
+      ctx.beginPath();
+      for (let i = 0; i < markCount; i += 1) {
+        const m = marks[i];
+        if (m.kind !== kind) continue;
+        ctx.moveTo(m.x1, m.y1);
+        ctx.lineTo(m.x2, m.y2);
+      }
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -154,6 +329,21 @@ export function createRenderer(canvas) {
     ctx.strokeStyle = "rgba(255, 255, 255, 0.75)";
     ctx.lineWidth = 7 / k;
     ctx.stroke(track.path);
+    // boost pads
+    ctx.fillStyle = "rgba(120, 215, 255, 0.9)";
+    for (const p of track.pads ?? []) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.6 / k, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // start line
+    const s = track.samples[0];
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.lineWidth = 2 / k;
+    ctx.beginPath();
+    ctx.moveTo(s.x - s.ty * track.halfWidth, s.y + s.tx * track.halfWidth);
+    ctx.lineTo(s.x + s.ty * track.halfWidth, s.y - s.tx * track.halfWidth);
+    ctx.stroke();
     for (const kart of karts) {
       ctx.fillStyle = kart.color;
       ctx.beginPath();
@@ -169,6 +359,7 @@ export function createRenderer(canvas) {
   }
 
   function draw({ track, karts, me }, dt) {
+    clock += dt;
     const focus = me ?? karts[0];
     const chase = cameraMode === "chase";
     if (!cam.ready) {
@@ -203,7 +394,7 @@ export function createRenderer(canvas) {
     boostVisual += ((focus.nitroOn ? 1 : 0) - boostVisual) * Math.min(1, dt * 6);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = Grass;
+    ctx.fillStyle = track.def.grass ?? Grass;
     ctx.fillRect(0, 0, width, height);
 
     ctx.save();
@@ -214,7 +405,7 @@ export function createRenderer(canvas) {
     }
     ctx.translate(-cam.x, -cam.y);
 
-    // faint grid so you can feel the speed on the grass (a square that covers any rotation)
+    // faint grid (under the road and the scenery) so you can feel the speed on the grass (a square that covers any rotation)
     const grid = 180;
     const reach = Math.hypot(width, height) / scale + grid;
     ctx.strokeStyle = GrassLine;
@@ -230,7 +421,14 @@ export function createRenderer(canvas) {
     }
     ctx.stroke();
 
+    // static grass texture and scenery, baked once per track
+    const world = ensureLayer(track);
+    ctx.drawImage(world.canvas, world.x, world.y, world.w, world.h);
     drawTrack(track);
+    drawPads(track);
+    rememberMarks(karts);
+    drawMarks();
+
     particles.draw(ctx);
     const ordered = [...karts].sort((a, b) => a.y - b.y);
     for (const kart of ordered) {
@@ -245,6 +443,11 @@ export function createRenderer(canvas) {
 
     if (boostVisual > 0.03) {
       drawSpeedLines();
+      ctx.save();
+      ctx.globalAlpha = boostVisual;
+      ctx.fillStyle = boostGradient;
+      ctx.fillRect(0, 0, width, height);
+      ctx.restore();
     }
     drawMinimap(track, karts, me);
   }
@@ -273,6 +476,11 @@ export function createRenderer(canvas) {
     draw,
     resize,
     particles,
+    resetMarks,
+    resetCamera() {
+      cam.ready = false;
+      cam.zoom = 1;
+    },
     setCameraMode(mode) {
       cameraMode = mode === "fixed" ? "fixed" : "chase";
     },

@@ -8,6 +8,7 @@ import {
   angleDiff,
   makeKart,
   placeOnGrid,
+  slipstream,
   stepKart,
 } from "../src/game.js";
 
@@ -147,6 +148,43 @@ test("hitting the wall reports the impact and cancels the drift reward", () => {
   }
   assert.ok(hit > 0, "wall impact was never reported");
   assert.equal(kart.driftReward, 0);
+});
+
+test("slipstream is strongest right behind a fast kart in line", () => {
+  const kart = newKart(track);
+  kart.a = 0;
+  const ahead = { x: kart.x + 90, y: kart.y, speed: 400 };
+  const close = slipstream(kart, [ahead]);
+  assert.ok(close > 0.5, `expected a strong draft, got ${close}`);
+  const far = slipstream(kart, [{ x: kart.x + 600, y: kart.y, speed: 400 }]);
+  assert.equal(far, 0);
+  const beside = slipstream(kart, [{ x: kart.x + 90, y: kart.y + 260, speed: 400 }]);
+  assert.equal(beside, 0, "a kart off to the side does not create a draft");
+  const slow = slipstream(kart, [{ x: kart.x + 90, y: kart.y, speed: 120 }]);
+  assert.equal(slow, 0, "a slow kart does not create a draft");
+});
+
+test("a boost pad fires once, then waits for its cooldown", () => {
+  const pad = track.pads[0];
+  const kart = newKart(track);
+  kart.x = pad.x;
+  kart.y = pad.y;
+  kart.lastIdx = pad.idx;
+  kart.dist = 0;
+  kart.a = Math.atan2(pad.ty, pad.tx);
+  kart.vx = pad.tx * 320;
+  kart.vy = pad.ty * 320;
+  kart.speed = 320;
+  kart.boostTimer = 0;
+  stepKart(kart, straight, FixedStep, track, true);
+  assert.equal(kart.padHit, 1, "the pad should report a hit");
+  assert.ok(kart.boostTimer > 0.6, `no boost: ${kart.boostTimer}`);
+  kart.padHit = 0;
+  kart.x = pad.x;
+  kart.y = pad.y;
+  kart.lastIdx = pad.idx;
+  stepKart(kart, straight, FixedStep, track, true);
+  assert.equal(kart.padHit, 0, "the same pad must not fire again during the cooldown");
 });
 
 test("race progress counts samples forward around the lap", () => {

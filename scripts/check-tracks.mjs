@@ -1,6 +1,7 @@
 // Sanity checks for the track definitions: a loop must not run into itself,
 // otherwise cars could shortcut or the road would overlap.
-import { Tracks, buildTrack } from "../src/track.js";
+import { Tracks, buildTrack, nearest } from "../src/track.js";
+import { createScenery } from "../src/scenery.js";
 
 let failed = false;
 for (const def of Tracks) {
@@ -38,15 +39,37 @@ for (const def of Tracks) {
     const area2 = Math.abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
     if (area2 > 1e-6) minRadius = Math.min(minRadius, (ab * bc * ca) / (2 * area2));
   }
+  // Boost pads must sit on the road, away from the edges and from each other.
+  let padsOk = track.pads.length === 3;
+  for (const pad of track.pads) {
+    if (nearest(track, pad.x, pad.y).dist > 1) padsOk = false;
+    if (pad.half * 2 > halfWidth * 2 - 40) padsOk = false;
+  }
+  for (let i = 0; i < track.pads.length; i += 1) {
+    for (let j = i + 1; j < track.pads.length; j += 1) {
+      const a = track.pads[i];
+      const b = track.pads[j];
+      if (Math.hypot(a.x - b.x, a.y - b.y) < 500) padsOk = false;
+    }
+  }
+
+  // Scenery must never be planted on the road.
+  const scenery = createScenery(track);
+  const sceneryOffRoad = scenery.objects.every(
+    (o) => o.kind === "stand" || nearest(track, o.x, o.y).dist > halfWidth + 15,
+  );
+
   const needed = halfWidth * 2 + 60;
   // A kart at 400 px/s turns at about 1.8 rad/s, so bends tighter than ~250 px
   // force the player to brake hard: keep every bend gentler than that.
   const MinBendRadius = 250;
-  const ok = minGap >= needed && minRadius >= MinBendRadius;
+  const ok = minGap >= needed && minRadius >= MinBendRadius && padsOk && sceneryOffRoad;
   if (!ok) failed = true;
   console.log(
     `${ok ? "OK  " : "FAIL"} ${def.name}: ${N} samples, length ${Math.round(track.length)}px, ` +
-      `closest roads ${Math.round(minGap)}px (need >= ${needed}), tightest bend radius ${Math.round(minRadius)}px (need >= ${MinBendRadius})`,
+      `closest roads ${Math.round(minGap)}px (need >= ${needed}), tightest bend radius ${Math.round(minRadius)}px (need >= ${MinBendRadius}), ` +
+      `${track.pads.length} pads ${padsOk ? "on the road" : "MISPLACED"}, ` +
+      `${scenery.objects.length} scenery pieces ${sceneryOffRoad ? "off the road" : "ON THE ROAD"}`,
   );
 }
 process.exit(failed ? 1 : 0);
