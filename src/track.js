@@ -9,6 +9,8 @@ export const Tracks = [
     width: 290,
     scale: 1.75, // the control points below are drawn small; this sets the real size
     smooth: 600, // rounds off tight bends (see smooth() below)
+    theme: "meadow",
+    grass: "#4a9a52",
     points: [
       [600, 400], [1400, 300], [2200, 380], [2750, 750], [2650, 1250],
       [2000, 1400], [1700, 1000], [1300, 1100], [1400, 1650], [900, 1800],
@@ -21,10 +23,26 @@ export const Tracks = [
     width: 280,
     scale: 1.75,
     smooth: 600,
+    theme: "forest",
+    grass: "#3d7f4c",
     points: [
       [500, 450], [1200, 250], [1750, 650], [2400, 300], [2950, 700],
       [2900, 1250], [2500, 1300], [2450, 1700], [2150, 2000], [1500, 2000],
       [950, 1750], [1000, 1300], [500, 1100], [300, 800],
+    ],
+  },
+  {
+    id: "ridge",
+    name: "Sunset Ridge",
+    width: 280,
+    scale: 1.75,
+    smooth: 600,
+    theme: "autumn",
+    grass: "#8d9a4d",
+    points: [
+      [500, 600], [1000, 350], [1500, 400], [1900, 700], [2350, 600], [2800, 800],
+      [2950, 1200], [2700, 1550], [2250, 1650], [1900, 1450], [1650, 1650],
+      [1300, 1750], [900, 1600], [450, 1500], [300, 1050],
     ],
   },
 ];
@@ -46,6 +64,46 @@ function catmull(p0, p1, p2, p3, t) {
 }
 
 const Spacing = 14;
+
+// Three boost pads per lap, placed on the straightest stretch near these parts
+// of the loop. A pad is a rectangle across the road: driving over it gives a
+// short boost (see stepKart). Keeping them on straights means they are a reward
+// for a good line rather than a trap before a corner.
+const PadFractions = [0.16, 0.46, 0.76];
+export const PadLength = 120;
+
+function buildPads(samples, N, halfWidth) {
+  const pads = [];
+  const span = 26; // samples compared to judge how straight a stretch is
+  const reach = Math.round(N * 0.06);
+  for (const fraction of PadFractions) {
+    const base = Math.round(fraction * N);
+    let bestIdx = base;
+    let bestScore = -Infinity;
+    for (let offset = -reach; offset <= reach; offset += 3) {
+      const i = (base + offset + N) % N;
+      const a = samples[(i - span + N) % N];
+      const b = samples[(i + span) % N];
+      const alignment = a.tx * b.tx + a.ty * b.ty; // 1 = perfectly straight
+      const score = alignment - Math.abs(offset) / N;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+    const s = samples[bestIdx];
+    pads.push({
+      idx: bestIdx,
+      x: s.x,
+      y: s.y,
+      tx: s.tx,
+      ty: s.ty,
+      length: PadLength,
+      half: Math.min(halfWidth * 0.48, 62),
+    });
+  }
+  return pads;
+}
 
 // Evenly spaced points along a closed polyline.
 function resample(poly, spacing) {
@@ -146,6 +204,7 @@ export function buildTrack(def) {
     samples,
     length,
     halfWidth: def.width / 2,
+    pads: buildPads(samples, N, def.width / 2),
     bounds: { minX, minY, maxX, maxY },
     path,
   };

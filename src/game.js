@@ -42,6 +42,18 @@ export const Physics = {
   // Mini-boost after a good drift
   boostTop: 1.22,
   boostAccel: 1.7,
+
+  // Boost pads painted on the road: a free, short boost.
+  padBoostTime: 1.05,
+  padCooldown: 1.4, // so one pad cannot be farmed by circling on it
+  padMinSpeed: 110,
+
+  // Slipstream: tucking in behind another kart makes you quicker.
+  draftTop: 0.13, // extra top speed at full draft
+  draftAccel: 0.55, // extra acceleration at full draft
+  draftAhead: 230, // how far behind a kart the air is still disturbed
+  draftSide: 72,
+  draftMinSpeed: 240,
 };
 
 export const KartColors = ["#4f6bff", "#ff5a5f", "#2bb673", "#f5a623", "#a259ff", "#14b8c4"];
@@ -81,9 +93,19 @@ export function makeKart({
     drifting: false,
     driftTime: 0, // seconds of the current slide
     boostTimer: 0, // seconds of mini-boost left
+    drafting: false, // in another kart's slipstream right now
+    draft: 0, // 0..1 strength
+    padCooldown: 0, // seconds until a boost pad can be used again
+    // lap timing
+    lapsDone: 0,
+    lapStart: 0, // race time when the current lap started
+    lapTimes: [],
+    lastLap: 0,
+    bestLap: 0,
     // one-shot events, read and cleared by the game loop (sound, particles)
     hit: 0, // wall impact speed this step
     driftReward: 0, // seconds of the slide that was just paid out
+    padHit: 0, // drove over a boost pad this step
   };
 }
 
@@ -113,6 +135,15 @@ export function placeOnGrid(kart, track, slot) {
   kart.boostTimer = 0;
   kart.hit = 0;
   kart.driftReward = 0;
+  kart.padHit = 0;
+  kart.drafting = false;
+  kart.draft = 0;
+  kart.padCooldown = 0;
+  kart.lapsDone = 0;
+  kart.lapStart = 0;
+  kart.lapTimes = [];
+  kart.lastLap = 0;
+  kart.bestLap = 0;
 }
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -124,8 +155,30 @@ export function angleDiff(target, current) {
   return d;
 }
 
+// 0..1: how much of another kart's slipstream we are in. A kart counts when it
+// is ahead of us, roughly in line, moving fast and close enough.
+export function slipstream(kart, others = []) {
+  const P = Physics;
+  const fx = Math.cos(kart.a);
+  const fy = Math.sin(kart.a);
+  let best = 0;
+  for (const other of others) {
+    if (other === kart) continue;
+    const dx = other.x - kart.x;
+    const dy = other.y - kart.y;
+    const ahead = dx * fx + dy * fy;
+    const side = Math.abs(-dx * fy + dy * fx);
+    if (ahead < 24 || ahead > P.draftAhead || side > P.draftSide) continue;
+    if ((other.speed ?? 0) < P.draftMinSpeed) continue;
+    const closeness = 1 - (ahead - 24) / (P.draftAhead - 24) * 0.45;
+    const centered = 1 - (side / P.draftSide) * 0.35;
+    best = Math.max(best, Math.min(1, closeness * centered));
+  }
+  return best;
+}
+
 // input: { steer: -1..1 (negative = left), gas, brake, drift, nitro }
-export function stepKart(kart, input, dt, track, canDrive) {
+export function stepKart(kart, input, dt, track, canDrive, others = []) {
   const P = Physics;
   let fx = Math.cos(kart.a);
   let fy = Math.sin(kart.a);
@@ -135,6 +188,12 @@ export function stepKart(kart, input, dt, track, canDrive) {
   const bx = fx; // heading at the start of the step
   const by = fy;
   const onRoad = kart.dist <= track.halfWidth;
+  kart.padCooldown = Math.max(0, kart.padCooldown - dt);
+
+  // --- slipstream ---
+  const draft = canDrive && onRoad ? slipstream(kart, others) : 0;
+  kart.draft = draft;
+  kart.drafting = draft > 0.35;
 
   // --- nitro tank ---
   if (canDrive && input.nitro && kart.nitro > (kart.nitroOn ? 0 : P.nitroStartMin)) {
@@ -147,8 +206,12 @@ export function stepKart(kart, input, dt, track, canDrive) {
   }
   kart.boostTimer = Math.max(0, kart.boostTimer - dt);
 
-  const power = kart.nitroOn ? P.nitroTop : kart.boostTimer > 0 ? P.boostTop : 1;
-  const thrust = kart.nitroOn ? P.nitroAccel : kart.boostTimer > 0 ? P.boostAccel : 1;
+  let power = kart.nitroOn ? P.nitroTop : kart.boostTimer > 0 ? P.boostTop : 1;
+  let thrust = kart.nitroOn ? P.nitroAccel : kart.boostTimer > 0 ? P.boostAccel : 1;
+  if (draft > 0 && !kart.nitroOn && kart.boostTimer <= 0) {
+    power = Math.max(power, 1 + P.draftTop * draft);
+    thrust = Math.max(thrust, 1 + P.draftAccel * draft);
+  }
   const top = P.maxSpeed * kart.skill * (onRoad ? 1 : P.offRoadFactor) * power;
 
   // --- throttle / brake ---
@@ -221,6 +284,22 @@ export function stepKart(kart, input, dt, track, canDrive) {
     }
   }
   kart.offRoad = kart.dist > track.halfWidth;
+
+  // --- boost pads ---
+  if (canDrive && kart.padCooldown <= 0 && along > P.padMinSpeed) {
+    for (const pad of track.pads ?? []) {
+      const dx = kart.x - pad.x;
+      const dy = kart.y - pad.y;
+      const lon = dx * pad.tx + dy * pad.ty;
+      const lat = Math.abs(-dx * pad.ty + dy * pad.tx);
+      if (Math.abs(lon) <= pad.length / 2 && lat <= pad.half) {
+        kart.boostTimer = Math.max(kart.boostTimer, P.padBoostTime);
+        kart.padCooldown = P.padCooldown;
+        kart.padHit = 1;
+        break;
+      }
+    }
+  }
 
   let delta = near.idx - kart.lastIdx;
   if (delta > track.N / 2) delta -= track.N;

@@ -161,6 +161,44 @@ export const audio = {
     source.stop(t + 0.3);
   },
 
+  // a short rising whoosh when a boost pad is collected
+  pad() {
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    for (const [from, to, type] of [
+      [220, 660, "triangle"],
+      [440, 1320, "sine"],
+    ]) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(from, t);
+      osc.frequency.exponentialRampToValueAtTime(to, t + 0.28);
+      gain.gain.setValueAtTime(0.09, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start(t);
+      osc.stop(t + 0.34);
+    }
+  },
+
+  // a quieter two-note chime for a new personal best
+  lap() {
+    [659, 880].forEach((f, i) => setTimeout(() => this.beep(f, 0.12, "sine", 0.12), i * 90));
+  },
+
+  // four-note fanfare for a new track record
+  record() {
+    [659, 784, 988, 1319].forEach((f, i) =>
+      setTimeout(() => this.beep(f, 0.16, "triangle", 0.16), i * 85),
+    );
+  },
+
+  warn() {
+    [220, 196].forEach((f, i) => setTimeout(() => this.beep(f, 0.14, "square", 0.1), i * 170));
+  },
+
   finish(won) {
     const notes = won ? [523, 659, 784, 1047] : [440, 392, 349];
     notes.forEach((f, i) => setTimeout(() => this.beep(f, 0.22, "triangle", 0.2), i * 130));

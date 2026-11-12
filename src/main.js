@@ -33,6 +33,13 @@ import { initLayout, onLayout, setForceLandscape } from "./layout.js";
 import { createOnlineSession, createRoomId } from "./online.js";
 
 const LapOptions = [1, 3, 5];
+const DifficultyOptions = ["easy", "normal", "hard"];
+// Bot skill multiplies their top speed. "Normal" is the original line-up.
+const BotSkills = {
+  easy: [0.70, 0.76, 0.81],
+  normal: [0.84, 0.90, 0.96],
+  hard: [0.93, 0.99, 1.04],
+};
 // Tilt sensitivity is a number from 1 (calm) to 10 (twitchy). It sets how many
 // degrees of tilt give full steering lock: 6 is about 24 degrees.
 const SensMin = 1;
@@ -56,6 +63,17 @@ function readSens(saved) {
   return { low: 3, normal: 6, high: 9 }[saved.sensitivity] ?? SensDefault;
 }
 
+function readRecords(raw) {
+  const out = {};
+  if (raw && typeof raw === "object") {
+    for (const id of Tracks.map((track) => track.id)) {
+      const value = Number(raw[id]);
+      if (Number.isFinite(value) && value > 0) out[id] = value;
+    }
+  }
+  return out;
+}
+
 function readPrefs() {
   let saved = {};
   try {
@@ -77,9 +95,15 @@ function readPrefs() {
     camera: saved.camera === "fixed" ? "fixed" : "chase",
     flip: saved.flip === true,
     autoDrift: saved.autoDrift !== false,
+    difficulty: DifficultyOptions.includes(saved.difficulty) ? saved.difficulty : "normal",
+    records: readRecords(saved.records),
   };
 }
 const prefs = readPrefs();
+function recordFor(trackId) {
+  return prefs.records[trackId] ?? 0;
+}
+
 function savePrefs() {
   try {
     localStorage.setItem("kart-prefs", JSON.stringify(prefs));
@@ -110,12 +134,18 @@ root.innerHTML = `
       </div>
     </div>
     <div class="hud-box right">
-      <span id="time"></span><span id="speed"></span>
+      <span id="time"></span>
+      <span id="laptime"></span>
+      <span id="best"></span>
+      <span id="speed"></span>
+      <span id="draft" class="draft" hidden>Slipstream</span>
       <div class="meter" role="img" aria-label="Nitro tank"><i id="nitro-fill"></i></div>
     </div>
   </div>
   <div id="net" hidden></div>
+  <div id="lights" hidden><i></i><i></i><i></i></div>
   <div id="countdown" hidden></div>
+  <div id="wrongway" hidden>Wrong way!</div>
   <div id="toast" hidden></div>
   <div id="tip" hidden></div>
   <button type="button" id="tilt-prompt" hidden>Tap to turn on tilt steering</button>
@@ -141,11 +171,16 @@ const hud = {
   lap: $("lap"),
   pos: $("pos"),
   time: $("time"),
+  laptime: $("laptime"),
+  best: $("best"),
   speed: $("speed"),
+  draft: $("draft"),
   nitro: $("nitro-fill"),
 };
 const netBadge = $("net");
 const countdownEl = $("countdown");
+const lightsEl = $("lights");
+const wrongWayEl = $("wrongway");
 const toastEl = $("toast");
 const tipEl = $("tip");
 const touchEl = $("touch");
@@ -293,6 +328,8 @@ let resultsEl = null;
 let resultsTimer = 0;
 let lobbyRefresh = () => {};
 let paused = false;
+let wrongWay = 0;
+let wrongWarned = false;
 let installPrompt = null; // the browser's "install app" offer, kept for our button
 let justInstalled = false;
 let refreshInstall = () => {};
@@ -300,7 +337,13 @@ let pauseEl = null;
 let tick = 0;
 let lastInput = { gas: false };
 let toastText = "";
+let toastKind = "boost";
 let toastUntil = 0;
+function showToast(text, kind = "boost", ms = 1100) {
+  toastText = text;
+  toastKind = kind;
+  toastUntil = performance.now() + ms;
+}
 
 function startDemo(trackId) {
   const t = track(trackId);
@@ -312,6 +355,12 @@ function startDemo(trackId) {
   me = null;
   remote = null;
   renderer.particles.clear();
+  renderer.resetCamera();
+  renderer.resetMarks(karts);
+  countdownEl.hidden = true;
+  lightsEl.hidden = true;
+  wrongWayEl.hidden = true;
+  toastEl.hidden = true;
 }
 
 function startRace({ trackId, laps, kartsSpec }) {
@@ -331,6 +380,10 @@ function startRace({ trackId, laps, kartsSpec }) {
   }
   world = { state: "countdown", track: t, karts, laps, raceTime: 0, countdown: CountdownSeconds };
   sendTimer = 0;
+  wrongWay = 0;
+  wrongWarned = false;
+  renderer.resetMarks(karts);
+  renderer.resetCamera();
   hud.root.hidden = false;
   touchEl.hidden = !isTouchDevice;
   showTip();
@@ -343,11 +396,12 @@ function showTip() {
   }
   prefs.tipSeen = true;
   savePrefs();
-  let text = "Hold Shift while turning to drift. Let go to charge nitro, then hold Space to boost.";
+  let text =
+    "Hold Shift while turning to drift, then release for nitro. Blue pads boost you, and tucking in behind a rival makes you faster.";
   if (isTouchDevice) {
     text = prefs.steer === "tilt"
-      ? "Tilt your phone like a wheel to steer. Turn hard to drift, then hold Nitro on the straights."
-      : "Steer with the arrows. Turn hard to drift, then hold Nitro on the straights.";
+      ? "Tilt to steer; turn hard to drift, then hold Nitro on the straights. Blue pads boost you, and tucking in behind a rival makes you faster."
+      : "Steer with the arrows; turn hard to drift, then hold Nitro on the straights. Blue pads boost you, and tucking in behind a rival makes you faster.";
   }
   tipEl.textContent = text;
   tipEl.hidden = false;
@@ -357,13 +411,14 @@ function showTip() {
 }
 
 function startSolo() {
+  const skills = BotSkills[prefs.difficulty] ?? BotSkills.normal;
   startRace({
     trackId: prefs.track,
     laps: prefs.laps,
     kartsSpec: [
-      { id: "b1", name: "Zip", color: KartColors[2], bot: true, skill: 0.84 },
-      { id: "b2", name: "Bolt", color: KartColors[3], bot: true, skill: 0.9 },
-      { id: "b3", name: "Turbo", color: KartColors[4], bot: true, skill: 0.96 },
+      { id: "b1", name: "Zip", color: KartColors[2], bot: true, skill: skills[0] },
+      { id: "b2", name: "Bolt", color: KartColors[3], bot: true, skill: skills[1] },
+      { id: "b3", name: "Turbo", color: KartColors[4], bot: true, skill: skills[2] },
       { id: "me", name: "You", color: KartColors[0], isMe: true },
     ],
   });
@@ -431,6 +486,64 @@ function checkFinish(kart) {
   return false;
 }
 
+// Every time a kart crosses the line, store that lap. The personal best is
+// kept in localStorage, so the next race starts with a target to beat.
+function noteLap(kart) {
+  const N = world.track.N;
+  while (kart.lapsDone < world.laps && kart.progress >= (kart.lapsDone + 1) * N) {
+    const lapTime = world.raceTime - kart.lapStart;
+    kart.lapStart = world.raceTime;
+    kart.lapsDone += 1;
+    kart.lastLap = lapTime;
+    kart.lapTimes.push(lapTime);
+    const improved = !kart.bestLap || lapTime < kart.bestLap;
+    if (improved) kart.bestLap = lapTime;
+    if (kart === me) {
+      if (improved) notePersonalBest(lapTime);
+      else if (world.laps > 1) {
+        const final = kart.lapsDone === world.laps - 1;
+        showToast(final ? "Final lap!" : `Lap ${kart.lapsDone}/${world.laps}`, "lap", 1200);
+      }
+    }
+  }
+}
+
+function notePersonalBest(lapTime) {
+  const id = world.track.def.id;
+  const record = recordFor(id);
+  if (!record || lapTime < record) {
+    prefs.records[id] = lapTime;
+    savePrefs();
+    world.newRecord = true;
+    showToast(`Track record  ${formatTime(lapTime)}`, "record", 2200);
+    audio.record();
+  } else {
+    showToast(`Best lap  ${formatTime(lapTime)}`, "good", 1600);
+    audio.lap();
+  }
+}
+
+// A kart pointing against the road (after a spin or while reversing) gets a
+// warning rather than silently losing places.
+function updateWrongWay(dt, racing) {
+  if (!racing || !me || me.finished || me.speed < 70) {
+    wrongWay = Math.max(0, wrongWay - dt * 2);
+    return;
+  }
+  const s = world.track.samples[me.lastIdx];
+  const forward = me.vx * s.tx + me.vy * s.ty;
+  if (forward < -30) {
+    wrongWay += dt;
+    if (wrongWay > 0.8 && !wrongWarned) {
+      wrongWarned = true;
+      audio.warn();
+    }
+  } else {
+    wrongWay = Math.max(0, wrongWay - dt * 2.5);
+    if (wrongWay === 0) wrongWarned = false;
+  }
+}
+
 function vibrate(ms) {
   if (prefs.sound && navigator.vibrate) {
     navigator.vibrate(ms);
@@ -480,6 +593,21 @@ function emitEffects(kart) {
   } else if (kart.boostTimer > 0 && tick % 2 === 0) {
     fx.emit("flame", rearX, rearY, -cos * 90 + rand(40), -sin * 90 + rand(40), 0.22, 6, FlameColors[2]);
   }
+  if (kart.drafting && kart.speed > 240 && tick % 3 === 0) {
+    // thin white streaks peeling off the front of the kart while it drafts
+    for (const side of [-1, 1]) {
+      fx.emit(
+        "spark",
+        kart.x + cos * 26 * KartScale - sin * side * 12 * KartScale,
+        kart.y + sin * 26 * KartScale + cos * side * 12 * KartScale,
+        -cos * (kart.speed * 0.7) - sin * side * 40,
+        -sin * (kart.speed * 0.7) + cos * side * 40,
+        0.24,
+        2,
+        "rgba(255,255,255,0.9)",
+      );
+    }
+  }
   if (kart.offRoad && kart.speed > 140 && tick % 2 === 0) {
     fx.emit(
       "grass",
@@ -509,10 +637,31 @@ function handleKartEvents(kart) {
     }
   }
   kart.hit = 0;
+  if (kart.padHit) {
+    const fx = renderer.particles;
+    for (let i = 0; i < 10; i += 1) {
+      fx.emit(
+        "flame",
+        kart.x - Math.cos(kart.a) * 18,
+        kart.y - Math.sin(kart.a) * 18,
+        rand(260) - Math.cos(kart.a) * 180,
+        rand(260) - Math.sin(kart.a) * 180,
+        0.35,
+        8,
+        i % 2 === 0 ? "#9fe4ff" : "#ffffff",
+      );
+    }
+    if (mine) {
+      showToast("Pad boost!", "pad", 1000);
+      audio.pad();
+      vibrate(12);
+      renderer.shake(2.5);
+    }
+    kart.padHit = 0;
+  }
   if (kart.driftReward > 0) {
     if (mine) {
-      toastText = "Drift boost!";
-      toastUntil = performance.now() + 1100;
+      showToast("Drift boost!", "boost", 1100);
       audio.boost();
       vibrate(20);
     }
@@ -585,15 +734,18 @@ function update(dt, now) {
         lastInput = input;
       }
     }
-    stepKart(kart, input, dt, t, racing || kart.finished);
+    stepKart(kart, input, dt, t, racing || kart.finished, karts);
     emitEffects(kart);
     handleKartEvents(kart);
+    if (racing) noteLap(kart);
     if (racing && checkFinish(kart) && kart === me) {
       session?.send({ t: "fin", time: kart.finishTime });
       audio.finish(standings().indexOf(me) === 0);
       showResults();
     }
   }
+
+  updateWrongWay(dt, racing);
 
   if (session && me && (racing || me.finished)) {
     sendTimer -= dt;
@@ -608,6 +760,7 @@ function update(dt, now) {
         p: Math.round(me.progress * 10) / 10,
         f: me.finished ? me.finishTime : 0, // repeated, so a lost "fin" message heals itself
         m: (me.nitroOn ? 1 : 0) | (me.drifting ? 2 : 0), // effects: nitro flame, drift smoke
+        b: Math.round(me.bestLap * 1000) / 1000, // best lap so far
       });
     }
   }
@@ -640,7 +793,11 @@ function updateHud() {
   setText("lap", hud.lap, `Lap ${lap}/${world.laps}`);
   setText("pos", hud.pos, `${ordinal(rank)} of ${world.karts.length}`);
   setText("time", hud.time, formatTime(Math.max(0, world.raceTime)));
+  const lapNow = me.finished ? me.lastLap : Math.max(0, world.raceTime - me.lapStart);
+  setText("laptime", hud.laptime, `Lap ${formatTime(lapNow)}`);
+  setText("best", hud.best, me.bestLap ? `Best ${formatTime(me.bestLap)}` : "Best --:--.---");
   setText("speed", hud.speed, `${Math.round(me.speed / 4)} km/h`);
+  hud.draft.hidden = !me.drafting;
   hud.nitro.style.width = `${Math.round(me.nitro * 100)}%`;
   hud.nitro.classList.toggle("on", me.nitroOn);
   hud.nitro.classList.toggle("low", me.nitro < 0.12);
@@ -653,7 +810,7 @@ function updateHud() {
     setText("toast", toastEl, `Drift ${me.driftTime.toFixed(1)}s`);
   } else if (toastUntil > nowMs) {
     toastEl.hidden = false;
-    toastEl.dataset.kind = "boost";
+    toastEl.dataset.kind = toastKind;
     setText("toast", toastEl, toastText);
   } else {
     toastEl.hidden = true;
@@ -678,12 +835,21 @@ function updateHud() {
     const n = Math.ceil(world.countdown - 0.2);
     countdownEl.hidden = false;
     setText("cd", countdownEl, n > 0 ? String(n) : "GO!");
+    lightsEl.hidden = false;
+    lightsEl.dataset.lit = String(Math.max(0, Math.min(3, n)));
+    lightsEl.classList.remove("go");
   } else if ((world.goFlash ?? 0) > 0) {
     countdownEl.hidden = false;
     setText("cd", countdownEl, "GO!");
+    lightsEl.hidden = false;
+    lightsEl.dataset.lit = "3";
+    lightsEl.classList.add("go");
   } else {
     countdownEl.hidden = true;
+    lightsEl.hidden = true;
   }
+
+  wrongWayEl.hidden = !(wrongWay > 0.8 && world.state === "racing");
 
   if (online) {
     netBadge.hidden = false;
@@ -799,8 +965,13 @@ function showMenu() {
     <button type="button" class="install" data-act="install" hidden>
       <strong>Install the app</strong><span>Fullscreen, opens from your home screen, works offline</span>
     </button>
-    <div class="group"><span class="label">Track</span><div data-slot="track"></div></div>
+    <div class="group">
+      <span class="label">Track</span>
+      <div data-slot="track"></div>
+      <p class="record" data-slot="record"></p>
+    </div>
     <div class="group"><span class="label">Laps</span><div data-slot="laps"></div></div>
+    <div class="group"><span class="label">Rivals</span><div data-slot="difficulty"></div></div>
     <button type="button" class="big primary" data-act="solo"><strong>Race against bots</strong><span>3 bots, one lap or more</span></button>
     <button type="button" class="big" data-act="online"><strong>Race a friend online</strong><span>Get an invite link, play from anywhere</span></button>
     ${
@@ -819,11 +990,18 @@ function showMenu() {
     }
     <p class="hint">${
       isTouchDevice
-        ? "Phone: tilt to steer, the kart speeds up by itself. Hold Nitro on straights, tap Brake to slow down. Turning hard drifts."
-        : "Keyboard: arrows or WASD drive, Shift drifts, Space is nitro, P pauses, C switches the camera."
+        ? "Tilt to steer; the kart accelerates itself. Turn hard to drift, hold Nitro on straights, and run over the blue pads for a free boost."
+        : "Arrows/WASD drive, Shift drifts, Space is nitro, P pauses, C switches the camera. Blue pads give a free boost, and tucking in behind a rival makes you faster."
     }</p>
     <a class="footer" href="check.html">Connection check</a>
   `);
+  const recordLine = element.querySelector('[data-slot="record"]');
+  const renderRecord = () => {
+    const best = recordFor(prefs.track);
+    recordLine.textContent = best
+      ? `Your best lap: ${formatTime(best)}`
+      : "No lap record yet: set one!";
+  };
   const renderChoices = () => {
     element.querySelector('[data-slot="track"]').replaceChildren(
       choice(
@@ -838,6 +1016,7 @@ function showMenu() {
         "Track",
       ),
     );
+    renderRecord();
     element.querySelector('[data-slot="laps"]').replaceChildren(
       choice(
         LapOptions.map((n) => ({ value: n, text: String(n) })),
@@ -848,6 +1027,22 @@ function showMenu() {
           renderChoices();
         },
         "Laps",
+      ),
+    );
+    element.querySelector('[data-slot="difficulty"]').replaceChildren(
+      choice(
+        [
+          { value: "easy", text: "Easy" },
+          { value: "normal", text: "Normal" },
+          { value: "hard", text: "Hard" },
+        ],
+        prefs.difficulty,
+        (value) => {
+          prefs.difficulty = value;
+          savePrefs();
+          renderChoices();
+        },
+        "Rival difficulty",
       ),
     );
   };
@@ -1185,6 +1380,7 @@ function showResults() {
   paused = false;
   const panel = card(`
     <h1 data-role="title"></h1>
+    <p class="results-sub" data-role="bestlap"></p>
     <ol class="results" data-role="rows"></ol>
     <div class="row-buttons">
       <button type="button" class="big primary" data-act="again"></button>
@@ -1226,6 +1422,19 @@ function fillResults() {
   const title = resultsEl.querySelector('[data-role="title"]');
   title.textContent =
     place === 1 ? (done ? "You won!" : "You finished 1st!") : `You finished ${ordinal(place)}`;
+  const recordLine = resultsEl.querySelector('[data-role="bestlap"]');
+  recordLine.replaceChildren();
+  if (me.bestLap) {
+    const best = document.createElement("span");
+    best.textContent = `Your best lap ${formatTime(me.bestLap)}`;
+    recordLine.append(best);
+  }
+  if (world.newRecord) {
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = "New track record";
+    recordLine.append(badge);
+  }
   const rows = resultsEl.querySelector('[data-role="rows"]');
   rows.replaceChildren(
     ...order.map((kart, i) => {
@@ -1236,10 +1445,14 @@ function fillResults() {
       const name = document.createElement("span");
       name.className = "name";
       name.textContent = `${i + 1}. ${kart.name}`;
+      const lap = document.createElement("span");
+      lap.className = "lap";
+      lap.textContent = kart.bestLap ? formatTime(kart.bestLap) : "--:--.---";
+      lap.title = "Best lap";
       const time = document.createElement("span");
       time.className = "time";
       time.textContent = kart.finished ? formatTime(kart.finishTime) : "racing...";
-      li.append(dot, name, time);
+      li.append(dot, name, lap, time);
       return li;
     }),
   );
@@ -1270,6 +1483,7 @@ function handleMessage(message) {
         p: message.p,
         nitroOn: (message.m & 1) === 1,
         drifting: (message.m & 2) === 2,
+        bestLap: Number.isFinite(message.b) ? message.b : 0,
         t: performance.now(),
       };
       if (!remote.seen) {
@@ -1281,6 +1495,9 @@ function handleMessage(message) {
       if (message.f > 0 && !remote.finished) {
         remote.finished = true;
         remote.finishTime = message.f;
+      }
+      if (Number.isFinite(message.b) && message.b > 0) {
+        remote.bestLap = message.b;
       }
     }
   } else if (message.t === "fin" && remote && Number.isFinite(message.time)) {

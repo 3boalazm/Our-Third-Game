@@ -2,12 +2,17 @@
 
 A small top-down kart racing game for the browser. Race three bots on your own, or race a friend online from anywhere (phone or computer).
 
-- Two tracks (Sunny Loop, Twisty Hills), 1 / 3 / 5 laps. Wide roads (about 290 px) with gentle bends: `npm test` fails if any bend is tighter than 250 px
+- Three tracks (Sunny Loop, Twisty Hills, Sunset Ridge), each with its own scenery and grass tones, 1 / 3 / 5 laps and Easy / Normal / Hard rivals. Wide roads (about 290 px) with gentle bends: `npm test` fails if any bend is tighter than 250 px
+- **Boost pads:** three per lap, on the straights. Drive over the blue chevrons for a free, short boost (the bots use them too)
+- **Slipstream:** tuck in right behind a rival for extra acceleration and top speed. A small "Slipstream" tag appears in the HUD while it is working
+- **Lap times and records:** the HUD shows the current lap and your best lap, and the menu remembers the best lap on each track. Beat it and the race calls out a new track record; the results list every kart's best lap
 - **Camera:** by default the camera sits behind the kart, so the road ahead always runs up the screen (also in landscape). "Fixed map" (Controls or the Pause menu, or the C key) keeps the map still instead
 - Keyboard: arrows or WASD drive, Down/S brake, **Shift** drift, **Space** nitro, P or Esc pause
 - Phone: the kart accelerates by itself and you **tilt the phone like a steering wheel**. Only two buttons are used: **Nitro** (right thumb) and **Brake** (left thumb). Drift is automatic when you turn hard. In Controls (start menu) you can switch to on-screen arrows, set the **tilt sensitivity** (1-10 slider, also in the Pause menu), flip the tilt direction, bring back a Drift button, or choose **Landscape** (fullscreen + screen lock where the browser allows it; on iPhone a "turn your phone" card is shown). iPhones ask for motion access once; Pause has a "Recenter tilt" button
 - **Drift**: hold Drift while steering through a corner to slide. A clean slide of 0.6 s or more, released on the road, charges the nitro tank and gives a short mini-boost. Crashing or leaving the road cancels the reward
 - **Nitro**: hold to boost (about 3 s from a full tank). The tank slowly refills on its own, much faster with good drifts
+- **Track-side details:** trees, bushes, rocks, tyre stacks, a grandstand and start-line flags, start lights, skid marks that stay on the road, and a minimap that also shows the boost pads. Decorations are placed from a fixed seed and are never on the road
+- **Wrong way:** turn round and a warning pulses instead of quietly losing places
 - Sound effects are synthesised in the browser (no audio files); the speaker button mutes them
 - **Install as an app (PWA):** the start menu has an "Install the app" button (Android/Chrome/desktop use the browser's install prompt; on iPhone it shows the Share > Add to Home Screen steps). The installed app opens **fullscreen** and the solo game works offline (a service worker caches the game; online races still need the connection)
 - **Fullscreen:** a button in the race HUD (or the F key) and, on phones, the game asks for fullscreen when a race starts (Controls > Fullscreen can turn that off)
@@ -23,7 +28,7 @@ npm install
 npm run dev
 ```
 
-Build for production with `npm run build` (output in `dist`). `npm test` checks that every track is a clean loop that does not run into itself and runs the physics tests (acceleration, frame-rate independence, wall, nitro, drift rewards, lap progress) and the tilt-angle maths for every screen orientation with Node's built-in test runner.
+Build for production with `npm run build` (output in `dist`). `npm test` checks that every track is a clean loop that does not run into itself, that boost pads and scenery are off the road and out of each other's way, and runs the physics tests (acceleration, frame-rate independence, wall, nitro, drift rewards, boost pads, slipstream, lap progress) and the tilt-angle maths for every screen orientation with Node's built-in test runner.
 
 ## How online play works
 
@@ -38,7 +43,8 @@ Both players connect to a small room relay (a Cloudflare Worker, the same one us
 - `src/particles.js` smoke, flames, grass and sparks (fixed-size pool)
 - `src/audio.js` engine, drift, nitro and crash sounds made with Web Audio
 - `tests/` physics tests
-- `src/render.js` canvas drawing and minimap
+- `src/render.js` canvas drawing, the baked grass/scenery layer, skid marks and minimap
+- `src/scenery.js` seeded trees, bushes, rocks, tyre stacks, grandstand and start-line flags
 - `src/input.js` keyboard, touch buttons and tilt (gyroscope) steering
 - `src/layout.js` rotates the game sideways for the Landscape option
 - `public/sw.js`, `public/manifest.webmanifest`, `public/icons/` the installable app; `python scripts/make-icons.py` regenerates the icons
