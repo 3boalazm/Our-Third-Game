@@ -62,6 +62,7 @@ export const Physics = {
 };
 
 export const KartColors = ["#4f6bff", "#ff5a5f", "#2bb673", "#f5a623", "#a259ff", "#14b8c4"];
+export const LiveryOptions = ["stripe", "twin", "clean"];
 
 export function makeKart({
   id,
@@ -71,11 +72,13 @@ export function makeKart({
   skill = 1,
   isMe = false,
   isRemote = false,
+  livery = "stripe",
 }) {
   return {
     id,
     name,
     color,
+    livery: LiveryOptions.includes(livery) ? livery : "stripe",
     bot,
     skill,
     isMe, // the kart this browser drives

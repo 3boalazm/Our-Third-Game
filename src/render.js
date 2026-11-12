@@ -234,9 +234,14 @@ export function createRenderer(canvas) {
     ctx.beginPath();
     ctx.roundRect(-4, -7, 14, 14, 4);
     ctx.fill();
-    // nose stripe
+    // nose livery
     ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
-    ctx.fillRect(14, -2.5, 8, 5);
+    if (kart.livery === "twin") {
+      ctx.fillRect(14, -6, 10, 2.5);
+      ctx.fillRect(14, 3.5, 10, 2.5);
+    } else if (kart.livery !== "clean") {
+      ctx.fillRect(14, -2.5, 8, 5);
+    }
     ctx.restore();
   }
 
@@ -381,7 +386,15 @@ export function createRenderer(canvas) {
     ctx.save();
     ctx.globalAlpha = 0.45;
     drawKart(
-      { x: ghost.x, y: ghost.y, a: ghost.a, color: "#d9f4ff", nitroOn: false, boostTimer: 0 },
+      {
+        x: ghost.x,
+        y: ghost.y,
+        a: ghost.a,
+        color: "#d9f4ff",
+        livery: "clean",
+        nitroOn: false,
+        boostTimer: 0,
+      },
       false,
     );
     ctx.restore();

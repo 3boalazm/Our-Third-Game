@@ -4,6 +4,7 @@ import {
   FixedStep,
   KartColors,
   KartScale,
+  LiveryOptions,
   Physics,
   angleDiff,
   botInput,
@@ -111,6 +112,7 @@ function readPrefs() {
     difficulty: DifficultyOptions.includes(saved.difficulty) ? saved.difficulty : "normal",
     records: readRecords(saved.records),
     color: KartColors.includes(saved.color) ? saved.color : KartColors[0],
+    livery: LiveryOptions.includes(saved.livery) ? saved.livery : "stripe",
     weather: WeatherOptions.some((w) => w.id === saved.weather) ? saved.weather : "clear",
     padBindings: normalizePadBindings(saved.padBindings),
   };
@@ -599,7 +601,7 @@ function startSolo() {
       { id: "b1", name: "Zip", color: colors[0], bot: true, skill: skills[0] },
       { id: "b2", name: "Bolt", color: colors[1], bot: true, skill: skills[1] },
       { id: "b3", name: "Turbo", color: colors[2], bot: true, skill: skills[2] },
-      { id: "me", name: "You", color: prefs.color, isMe: true },
+      { id: "me", name: "You", color: prefs.color, livery: prefs.livery, isMe: true },
     ],
   });
 }
@@ -609,7 +611,7 @@ function startTimeTrial() {
     trackId: prefs.track,
     laps: prefs.laps,
     mode: "trial",
-    kartsSpec: [{ id: "me", name: "You", color: prefs.color, isMe: true }],
+    kartsSpec: [{ id: "me", name: "You", color: prefs.color, livery: prefs.livery, isMe: true }],
   });
 }
 
@@ -620,7 +622,7 @@ function startDailyChallenge() {
     laps: challenge.laps,
     mode: "trial",
     weather: "clear",
-    kartsSpec: [{ id: "me", name: "You", color: prefs.color, isMe: true }],
+    kartsSpec: [{ id: "me", name: "You", color: prefs.color, livery: prefs.livery, isMe: true }],
   });
 }
 
@@ -1313,6 +1315,7 @@ function showMenu() {
     <div class="group"><span class="label">Rivals</span><div data-slot="difficulty"></div></div>
     <div class="group"><span class="label">Weather</span><div data-slot="weather"></div></div>
     <div class="group"><span class="label">Your kart</span><div data-slot="color"></div></div>
+    <div class="group"><span class="label">Livery</span><div data-slot="livery"></div></div>
     <button type="button" class="big primary" data-act="solo"><strong>Race against bots</strong><span>3 bots, one lap or more</span></button>
     <button type="button" class="big" data-act="trial"><strong>Time trial</strong><span data-role="trial-sub"></span></button>
     <button type="button" class="big" data-act="online"><strong>Race a friend online</strong><span>Get an invite link, play from anywhere</span></button>
@@ -1501,6 +1504,22 @@ function showMenu() {
         savePrefs();
         renderChoices();
       }),
+    );
+    element.querySelector('[data-slot="livery"]').replaceChildren(
+      choice(
+        [
+          { value: "stripe", text: "Racing stripe" },
+          { value: "twin", text: "Twin stripes" },
+          { value: "clean", text: "Clean" },
+        ],
+        prefs.livery,
+        (value) => {
+          prefs.livery = value;
+          savePrefs();
+          renderChoices();
+        },
+        "Livery",
+      ),
     );
     const ghost = loadGhost(prefs.track);
     element.querySelector('[data-role="trial-sub"]').textContent = ghost
@@ -1772,6 +1791,7 @@ function rememberReplay(dt) {
       y: kart.y,
       a: kart.a,
       color: kart.color,
+      livery: kart.livery,
       name: kart.name,
       speed: kart.speed,
       drifting: kart.drifting,

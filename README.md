@@ -8,7 +8,7 @@ A small top-down kart racing game for the browser. Race three bots on your own, 
 - **Contact:** karts rub and bump instead of driving through each other. A hit costs a little speed and throws a few sparks; your friend's kart only ever pushes you, it never moves on your screen
 - **Time trial and ghost:** race alone against the clock. Your fastest lap is saved as a translucent ghost that you can chase on the next attempt, and the menu shows which ghost time you are up against
 - **Medals:** every track has bronze, silver and gold lap-time targets scaled to its length. The best-lap line in the menu shows your medal and the next target
-- **Kart colour:** pick one of six colours in the menu; the bots are assigned different ones. The choice is remembered
+- **Garage:** pick one of six kart colours and a livery (racing stripe, twin stripes or clean) in the menu; the bots are assigned different colours. Both choices are remembered
 - **Lap times and records:** the HUD shows the current lap and your best lap, and the menu remembers the best lap on each track. Beat it and the race calls out a new track record; the results list every kart's best lap
 - **Weather:** pick Clear, Rain or Night. Rain adds streaks and a wet tint, costs a little top speed and, more importantly, **grip**: the kart slides more and steering is softer. Night darkens the track and turns on the headlights. Weather is saved with the rest of the menu choices (online races stay clear so both players get the same physics)
 - **Daily challenge:** one deterministic challenge per day, shown on the start menu: a bronze, silver or gold lap at one of the tracks. The card starts a one-lap time trial on that track, and turning in the required lap marks the day done
