@@ -514,7 +514,7 @@ function startDemo(trackId) {
   toastEl.hidden = true;
 }
 
-function startRace({ trackId, laps, kartsSpec, mode = "race", weather = prefs.weather }) {
+function startRace({ trackId, laps, kartsSpec, mode = "race", weather = prefs.weather, daily = false }) {
   padRemap = null;
   padRemapRender = null;
   replayBuffer = [];
@@ -538,6 +538,7 @@ function startRace({ trackId, laps, kartsSpec, mode = "race", weather = prefs.we
   world = {
     state: "countdown",
     mode,
+    daily,
     track: t,
     karts,
     laps,
@@ -622,6 +623,7 @@ function startDailyChallenge() {
     laps: challenge.laps,
     mode: "trial",
     weather: "clear",
+    daily: true,
     kartsSpec: [{ id: "me", name: "You", color: prefs.color, livery: prefs.livery, isMe: true }],
   });
 }
@@ -1969,8 +1971,12 @@ function showPause() {
   panel.querySelector('[data-act="replay"]')?.addEventListener("click", enterReplay);
   panel.querySelector('[data-act="photo"]')?.addEventListener("click", enterPhotoMode);
   panel.querySelector('[data-act="restart"]')?.addEventListener("click", () => {
-    if (world?.mode === "trial") startTimeTrial();
-    else startSolo();
+    if (world?.mode === "trial") {
+      if (world.daily) startDailyChallenge();
+      else startTimeTrial();
+    } else {
+      startSolo();
+    }
   });
   const wrap = document.createElement("div");
   wrap.className = "overlay";
@@ -2043,13 +2049,16 @@ function showResults() {
   } else {
     again.textContent = trial ? "Try again" : online ? "Rematch" : "Race again";
     panel.querySelector('[data-role="note"]').textContent = trial
-      ? "Beat the ghost and it is saved on this track."
+      ? world.daily
+        ? "The daily challenge is counted for today; Try again keeps the same challenge."
+        : "Beat the ghost and it is saved on this track."
       : "";
     again.addEventListener("click", () => {
       if (online) {
         hostStartsRace();
       } else if (trial) {
-        startTimeTrial();
+        if (world.daily) startDailyChallenge();
+        else startTimeTrial();
       } else {
         startSolo();
       }
