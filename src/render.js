@@ -307,7 +307,7 @@ export function createRenderer(canvas) {
     ctx.restore();
   }
 
-  function drawMinimap(track, karts, me) {
+  function drawMinimap(track, karts, me, ghost) {
     const boxW = Math.min(150, width * 0.32);
     const boxH = boxW * 0.72;
     const pad = 10;
@@ -355,10 +355,39 @@ export function createRenderer(canvas) {
         ctx.stroke();
       }
     }
+    if (ghost) {
+      ctx.strokeStyle = "rgba(220, 246, 255, 0.9)";
+      ctx.lineWidth = 2 / k;
+      ctx.beginPath();
+      ctx.arc(ghost.x, ghost.y, 7 / k, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
-  function draw({ track, karts, me }, dt) {
+  // The saved best lap: a pale copy of the kart, drawn under the real karts.
+  function drawGhost(ghost) {
+    ctx.save();
+    ctx.globalAlpha = 0.45;
+    drawKart(
+      { x: ghost.x, y: ghost.y, a: ghost.a, color: "#d9f4ff", nitroOn: false, boostTimer: 0 },
+      false,
+    );
+    ctx.restore();
+    ctx.save();
+    ctx.translate(ghost.x, ghost.y);
+    ctx.rotate(cameraMode === "chase" ? cam.angle + Math.PI / 2 : 0);
+    ctx.font = "700 12px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.45)";
+    ctx.strokeText("GHOST", 0, -27 * KartScale);
+    ctx.fillStyle = "rgba(220, 246, 255, 0.9)";
+    ctx.fillText("GHOST", 0, -27 * KartScale);
+    ctx.restore();
+  }
+
+  function draw({ track, karts, me, ghost }, dt) {
     clock += dt;
     const focus = me ?? karts[0];
     const chase = cameraMode === "chase";
@@ -430,6 +459,7 @@ export function createRenderer(canvas) {
     drawMarks();
 
     particles.draw(ctx);
+    if (ghost) drawGhost(ghost);
     const ordered = [...karts].sort((a, b) => a.y - b.y);
     for (const kart of ordered) {
       drawKart(kart, kart === me);
@@ -449,7 +479,7 @@ export function createRenderer(canvas) {
       ctx.fillRect(0, 0, width, height);
       ctx.restore();
     }
-    drawMinimap(track, karts, me);
+    drawMinimap(track, karts, me, ghost);
   }
 
   // streaks flying out from the centre while the nitro is on

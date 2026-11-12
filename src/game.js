@@ -54,6 +54,11 @@ export const Physics = {
   draftAhead: 230, // how far behind a kart the air is still disturbed
   draftSide: 72,
   draftMinSpeed: 240,
+
+  // Kart-to-kart contact: a soft circle around each kart. Rubbing wheels costs
+  // a little speed and shoves both karts apart, but never stops the race.
+  kartRadius: 25,
+  bumpRestitution: 0.45,
 };
 
 export const KartColors = ["#4f6bff", "#ff5a5f", "#2bb673", "#f5a623", "#a259ff", "#14b8c4"];
@@ -106,6 +111,7 @@ export function makeKart({
     hit: 0, // wall impact speed this step
     driftReward: 0, // seconds of the slide that was just paid out
     padHit: 0, // drove over a boost pad this step
+    bump: 0, // speed of a kart-to-kart hit this step (for sound and sparks)
   };
 }
 
@@ -136,6 +142,7 @@ export function placeOnGrid(kart, track, slot) {
   kart.hit = 0;
   kart.driftReward = 0;
   kart.padHit = 0;
+  kart.bump = 0;
   kart.drafting = false;
   kart.draft = 0;
   kart.padCooldown = 0;
@@ -307,6 +314,66 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
   kart.progress += delta;
   kart.lastIdx = near.idx;
   kart.speed = Math.hypot(kart.vx, kart.vy);
+}
+
+// Soft contact between karts. The friend's kart (isRemote) owns its position on
+// their browser, so here it only pushes us away; both local karts move equally.
+export function resolveContacts(karts) {
+  const P = Physics;
+  const reach = P.kartRadius * 2;
+  for (let i = 0; i < karts.length; i += 1) {
+    const a = karts[i];
+    if (a.isGhost) continue;
+    for (let j = i + 1; j < karts.length; j += 1) {
+      const b = karts[j];
+      if (b.isGhost) continue;
+      let dx = b.x - a.x;
+      let dy = b.y - a.y;
+      let dist = Math.hypot(dx, dy);
+      if (dist >= reach) continue;
+      if (dist < 0.001) {
+        // exactly on top of each other: pick a stable direction
+        dx = Math.cos(a.a + Math.PI / 2);
+        dy = Math.sin(a.a + Math.PI / 2);
+        dist = 0.001;
+      }
+      const nx = dx / dist;
+      const ny = dy / dist;
+      const overlap = reach - dist;
+      const aMove = a.isRemote ? 0 : 1;
+      const bMove = b.isRemote ? 0 : 1;
+      const movers = aMove + bMove;
+      if (movers === 0) continue;
+      if (aMove) {
+        a.x -= nx * overlap * (aMove / movers);
+        a.y -= ny * overlap * (aMove / movers);
+      }
+      if (bMove) {
+        b.x += nx * overlap * (bMove / movers);
+        b.y += ny * overlap * (bMove / movers);
+      }
+
+      // Only a closing pair gets an impulse; once they are separating the
+      // separation above is enough.
+      const closing = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+      if (closing <= 0) continue;
+      const share = (1 + P.bumpRestitution) / 2;
+      if (aMove) {
+        const push = aMove === 1 && bMove === 0 ? closing : closing * share;
+        a.vx -= nx * push;
+        a.vy -= ny * push;
+      }
+      if (bMove) {
+        const push = bMove === 1 && aMove === 0 ? closing : closing * share;
+        b.vx += nx * push;
+        b.vy += ny * push;
+      }
+      a.bump = Math.max(a.bump, closing);
+      if (bMove) b.bump = Math.max(b.bump, closing);
+      a.speed = Math.hypot(a.vx, a.vy);
+      if (bMove) b.speed = Math.hypot(b.vx, b.vy);
+    }
+  }
 }
 
 // A bot looks a few samples ahead on the centre line and steers at that point.

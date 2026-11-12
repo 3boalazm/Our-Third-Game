@@ -114,6 +114,12 @@ input {
   letter-spacing: 0.01em;
 }
 
+.hud-box.right #ghost {
+  color: #9fe4ff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .hud-box.right #speed {
   color: var(--text);
   font-size: 14px;
@@ -786,10 +792,67 @@ body[data-steer="tilt"] .touch-left .brake {
 }
 
 .record {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   margin: 2px 0 0;
   color: #9fe4ff;
   font-size: 12px;
   font-weight: 600;
+}
+
+.record .goal {
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.medal {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #1a1f2e;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.medal.gold {
+  background: #ffd36b;
+  box-shadow: 0 0 8px rgb(255 211 107 / 45%);
+}
+
+.medal.silver {
+  background: #cfd6e6;
+  box-shadow: 0 0 8px rgb(207 214 230 / 35%);
+}
+
+.medal.bronze {
+  background: #d08b4f;
+  box-shadow: 0 0 8px rgb(208 139 79 / 35%);
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.swatch {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 2px solid rgb(255 255 255 / 28%);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.swatch.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 3px rgb(111 134 255 / 55%);
 }
 
 .results-sub {
@@ -801,6 +864,11 @@ body[data-steer="tilt"] .touch-left .brake {
   margin: -4px 0 0;
   color: var(--soft);
   font-size: 13px;
+}
+
+.badge.ghost {
+  background: rgb(127 209 255 / 16%);
+  color: #9fe4ff;
 }
 
 .badge {

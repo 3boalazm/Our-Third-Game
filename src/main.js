@@ -10,12 +10,16 @@ import {
   formatTime,
   makeKart,
   placeOnGrid,
+  resolveContacts,
   stepKart,
 } from "./game.js";
+import { loadGhost, recordGhostFrame, sampleGhost, saveGhost } from "./ghost.js";
 import { createRenderer } from "./render.js";
 import {
   bindInput,
   enableTilt,
+  gamepadAvailable,
+  gamepadPausePressed,
   isTouchDevice,
   readInput,
   recenterTilt,
@@ -97,11 +101,42 @@ function readPrefs() {
     autoDrift: saved.autoDrift !== false,
     difficulty: DifficultyOptions.includes(saved.difficulty) ? saved.difficulty : "normal",
     records: readRecords(saved.records),
+    color: KartColors.includes(saved.color) ? saved.color : KartColors[0],
   };
 }
 const prefs = readPrefs();
 function recordFor(trackId) {
   return prefs.records[trackId] ?? 0;
+}
+
+// Medals are lap-time goals that scale with the length of the track.
+const MedalPace = { gold: 400, silver: 340, bronze: 285 }; // pixels per second
+function medalTargets(trackDef) {
+  return Object.fromEntries(
+    Object.entries(MedalPace).map(([tier, pace]) => [tier, trackDef.length / pace]),
+  );
+}
+function medalForLap(trackDef, lap) {
+  if (!lap) return null;
+  const targets = medalTargets(trackDef);
+  if (lap <= targets.gold) return "gold";
+  if (lap <= targets.silver) return "silver";
+  if (lap <= targets.bronze) return "bronze";
+  return null;
+}
+function nextMedal(trackDef, lap) {
+  const targets = medalTargets(trackDef);
+  if (!lap || lap > targets.bronze) return { tier: "bronze", time: targets.bronze };
+  if (lap > targets.silver) return { tier: "silver", time: targets.silver };
+  if (lap > targets.gold) return { tier: "gold", time: targets.gold };
+  return null;
+}
+function medalChip(tier) {
+  const span = document.createElement("span");
+  span.className = `medal ${tier}`;
+  span.textContent = tier[0].toUpperCase();
+  span.title = `${tier[0].toUpperCase()}${tier.slice(1)} medal pace`;
+  return span;
 }
 
 function savePrefs() {
@@ -137,6 +172,7 @@ root.innerHTML = `
       <span id="time"></span>
       <span id="laptime"></span>
       <span id="best"></span>
+      <span id="ghost" hidden></span>
       <span id="speed"></span>
       <span id="draft" class="draft" hidden>Slipstream</span>
       <div class="meter" role="img" aria-label="Nitro tank"><i id="nitro-fill"></i></div>
@@ -173,6 +209,7 @@ const hud = {
   time: $("time"),
   laptime: $("laptime"),
   best: $("best"),
+  ghost: $("ghost"),
   speed: $("speed"),
   draft: $("draft"),
   nitro: $("nitro-fill"),
@@ -363,7 +400,7 @@ function startDemo(trackId) {
   toastEl.hidden = true;
 }
 
-function startRace({ trackId, laps, kartsSpec }) {
+function startRace({ trackId, laps, kartsSpec, mode = "race" }) {
   hideResults();
   hidePause();
   paused = false;
@@ -378,7 +415,22 @@ function startRace({ trackId, laps, kartsSpec }) {
   if (remote) {
     remote.target = null;
   }
-  world = { state: "countdown", track: t, karts, laps, raceTime: 0, countdown: CountdownSeconds };
+  const savedGhost = mode === "trial" ? loadGhost(t.def.id) : null;
+  world = {
+    state: "countdown",
+    mode,
+    track: t,
+    karts,
+    laps,
+    raceTime: 0,
+    countdown: CountdownSeconds,
+    ghost: savedGhost?.frames ?? null,
+    ghostTime: savedGhost?.time ?? 0,
+    ghostPos: null,
+    lapFrames: [],
+    newGhost: false,
+    newRecord: false,
+  };
   sendTimer = 0;
   wrongWay = 0;
   wrongWarned = false;
@@ -410,17 +462,36 @@ function showTip() {
   }, 9000);
 }
 
+function botColors(count) {
+  const colors = [];
+  for (let i = 0; colors.length < count && i < KartColors.length * 2; i += 1) {
+    const color = KartColors[(i + 2) % KartColors.length];
+    if (color !== prefs.color && !colors.includes(color)) colors.push(color);
+  }
+  return colors;
+}
+
 function startSolo() {
   const skills = BotSkills[prefs.difficulty] ?? BotSkills.normal;
+  const colors = botColors(3);
   startRace({
     trackId: prefs.track,
     laps: prefs.laps,
     kartsSpec: [
-      { id: "b1", name: "Zip", color: KartColors[2], bot: true, skill: skills[0] },
-      { id: "b2", name: "Bolt", color: KartColors[3], bot: true, skill: skills[1] },
-      { id: "b3", name: "Turbo", color: KartColors[4], bot: true, skill: skills[2] },
-      { id: "me", name: "You", color: KartColors[0], isMe: true },
+      { id: "b1", name: "Zip", color: colors[0], bot: true, skill: skills[0] },
+      { id: "b2", name: "Bolt", color: colors[1], bot: true, skill: skills[1] },
+      { id: "b3", name: "Turbo", color: colors[2], bot: true, skill: skills[2] },
+      { id: "me", name: "You", color: prefs.color, isMe: true },
     ],
+  });
+}
+
+function startTimeTrial() {
+  startRace({
+    trackId: prefs.track,
+    laps: prefs.laps,
+    mode: "trial",
+    kartsSpec: [{ id: "me", name: "You", color: prefs.color, isMe: true }],
   });
 }
 
@@ -499,6 +570,7 @@ function noteLap(kart) {
     const improved = !kart.bestLap || lapTime < kart.bestLap;
     if (improved) kart.bestLap = lapTime;
     if (kart === me) {
+      if (world.mode === "trial") finishGhostLap(lapTime);
       if (improved) notePersonalBest(lapTime);
       else if (world.laps > 1) {
         const final = kart.lapsDone === world.laps - 1;
@@ -506,6 +578,58 @@ function noteLap(kart) {
       }
     }
   }
+}
+
+// A time-trial lap is also a recording: keep it as this track's ghost when it
+// is faster than the one already saved.
+function finishGhostLap(lapTime) {
+  const frames = world.lapFrames;
+  if (frames.length > 1) {
+    recordGhostFrame(frames, lapTime, me.x, me.y, me.a);
+    if (!world.ghostTime || lapTime < world.ghostTime - 0.001) {
+      world.ghost = frames;
+      world.ghostTime = lapTime;
+      world.newGhost = true;
+      saveGhost(world.track.def.id, lapTime, frames);
+    }
+  }
+  world.lapFrames = [];
+}
+
+function recordTrialPoint() {
+  if (!world || world.mode !== "trial" || world.state !== "racing" || !me || me.finished) return;
+  recordGhostFrame(
+    world.lapFrames,
+    Math.max(0, world.raceTime - me.lapStart),
+    me.x,
+    me.y,
+    me.a,
+  );
+}
+
+function updateGhost() {
+  if (!world || world.mode !== "trial") return;
+  if (!world.ghost || !me || world.state !== "racing" || me.finished) {
+    world.ghostPos = null;
+    return;
+  }
+  const t = Math.max(0, world.raceTime - me.lapStart);
+  world.ghostPos = t <= world.ghostTime + 0.25 ? sampleGhost(world.ghost, t) : null;
+}
+
+function handleBumpEvents(kart) {
+  if (kart.bump > 90) {
+    const fx = renderer.particles;
+    for (let i = 0; i < 6; i += 1) {
+      fx.emit("spark", kart.x, kart.y, rand(320), rand(320), 0.28, 2.5, "#ffd36b");
+    }
+    if (kart === me) {
+      renderer.shake(Math.min(9, kart.bump / 75));
+      audio.crash(Math.min(1, kart.bump / 700));
+      vibrate(12);
+    }
+  }
+  kart.bump = 0;
 }
 
 function notePersonalBest(lapTime) {
@@ -682,11 +806,13 @@ function update(dt, now) {
 
   if (world.state === "demo") {
     for (const kart of karts) {
-      stepKart(kart, botInput(kart, t), dt, t, true);
+      stepKart(kart, botInput(kart, t), dt, t, true, karts);
       if (tick % 3 === 0) emitEffects(kart);
       kart.hit = 0;
       kart.driftReward = 0;
     }
+    resolveContacts(karts);
+    for (const kart of karts) kart.bump = 0;
     return;
   }
 
@@ -745,6 +871,10 @@ function update(dt, now) {
     }
   }
 
+  resolveContacts(karts);
+  for (const kart of karts) handleBumpEvents(kart);
+  recordTrialPoint();
+  updateGhost();
   updateWrongWay(dt, racing);
 
   if (session && me && (racing || me.finished)) {
@@ -791,11 +921,18 @@ function updateHud() {
   const lap = Math.max(1, Math.min(world.laps, Math.floor(me.progress / world.track.N) + 1));
   const rank = standings().indexOf(me) + 1;
   setText("lap", hud.lap, `Lap ${lap}/${world.laps}`);
-  setText("pos", hud.pos, `${ordinal(rank)} of ${world.karts.length}`);
+  setText(
+    "pos",
+    hud.pos,
+    world.mode === "trial" ? "Time trial" : `${ordinal(rank)} of ${world.karts.length}`,
+  );
   setText("time", hud.time, formatTime(Math.max(0, world.raceTime)));
   const lapNow = me.finished ? me.lastLap : Math.max(0, world.raceTime - me.lapStart);
   setText("laptime", hud.laptime, `Lap ${formatTime(lapNow)}`);
   setText("best", hud.best, me.bestLap ? `Best ${formatTime(me.bestLap)}` : "Best --:--.---");
+  const ghostLine = world.mode === "trial" && world.ghostTime ? `Ghost ${formatTime(world.ghostTime)}` : "";
+  hud.ghost.hidden = !ghostLine;
+  if (ghostLine) setText("ghost", hud.ghost, ghostLine);
   setText("speed", hud.speed, `${Math.round(me.speed / 4)} km/h`);
   hud.draft.hidden = !me.drafting;
   hud.nitro.style.width = `${Math.round(me.nitro * 100)}%`;
@@ -930,6 +1067,28 @@ function slider({ min, max, value, label, onInput, onChange }) {
   return row;
 }
 
+const ColorNames = ["Blue", "Red", "Green", "Orange", "Purple", "Teal"];
+
+function swatches(selected, onPick) {
+  const row = document.createElement("div");
+  row.className = "swatches";
+  row.setAttribute("role", "radiogroup");
+  row.setAttribute("aria-label", "Kart colour");
+  KartColors.forEach((color, i) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "swatch";
+    button.style.background = color;
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-label", ColorNames[i] ?? `Colour ${i + 1}`);
+    button.setAttribute("aria-checked", String(color === selected));
+    button.classList.toggle("active", color === selected);
+    button.addEventListener("click", () => onPick(color));
+    row.append(button);
+  });
+  return row;
+}
+
 function choice(options, selected, onPick, label) {
   const row = document.createElement("div");
   row.className = "choices";
@@ -972,7 +1131,9 @@ function showMenu() {
     </div>
     <div class="group"><span class="label">Laps</span><div data-slot="laps"></div></div>
     <div class="group"><span class="label">Rivals</span><div data-slot="difficulty"></div></div>
+    <div class="group"><span class="label">Your kart</span><div data-slot="color"></div></div>
     <button type="button" class="big primary" data-act="solo"><strong>Race against bots</strong><span>3 bots, one lap or more</span></button>
+    <button type="button" class="big" data-act="trial"><strong>Time trial</strong><span data-role="trial-sub"></span></button>
     <button type="button" class="big" data-act="online"><strong>Race a friend online</strong><span>Get an invite link, play from anywhere</span></button>
     ${
       isTouchDevice
@@ -992,15 +1153,34 @@ function showMenu() {
       isTouchDevice
         ? "Tilt to steer; the kart accelerates itself. Turn hard to drift, hold Nitro on straights, and run over the blue pads for a free boost."
         : "Arrows/WASD drive, Shift drifts, Space is nitro, P pauses, C switches the camera. Blue pads give a free boost, and tucking in behind a rival makes you faster."
+    }${
+      gamepadAvailable()
+        ? " Gamepad: left stick steers, RT/A gas, LT/B brake, X drifts, Y fires nitro."
+        : ""
     }</p>
     <a class="footer" href="check.html">Connection check</a>
   `);
   const recordLine = element.querySelector('[data-slot="record"]');
   const renderRecord = () => {
+    const built = track(prefs.track);
     const best = recordFor(prefs.track);
-    recordLine.textContent = best
-      ? `Your best lap: ${formatTime(best)}`
-      : "No lap record yet: set one!";
+    recordLine.replaceChildren();
+    if (best) {
+      const medal = medalForLap(built, best);
+      if (medal) recordLine.append(medalChip(medal));
+      const text = document.createElement("span");
+      text.textContent = `Best lap ${formatTime(best)}`;
+      recordLine.append(text);
+    } else {
+      recordLine.textContent = "No lap record yet: set one!";
+    }
+    const goal = nextMedal(built, best);
+    if (goal) {
+      const target = document.createElement("span");
+      target.className = "goal";
+      target.textContent = `${goal.tier[0].toUpperCase()}${goal.tier.slice(1)} under ${formatTime(goal.time)}`;
+      recordLine.append(target);
+    }
   };
   const renderChoices = () => {
     element.querySelector('[data-slot="track"]').replaceChildren(
@@ -1045,6 +1225,17 @@ function showMenu() {
         "Rival difficulty",
       ),
     );
+    element.querySelector('[data-slot="color"]').replaceChildren(
+      swatches(prefs.color, (value) => {
+        prefs.color = value;
+        savePrefs();
+        renderChoices();
+      }),
+    );
+    const ghost = loadGhost(prefs.track);
+    element.querySelector('[data-role="trial-sub"]').textContent = ghost
+      ? `Race your ghost · ${formatTime(ghost.time)}`
+      : "No rivals. Set a lap to make a ghost.";
   };
   renderChoices();
   if (isTouchDevice) {
@@ -1145,6 +1336,12 @@ function showMenu() {
     userLeftFullscreen = false;
     startImmersive();
     startSolo();
+  });
+  element.querySelector('[data-act="trial"]').addEventListener("click", () => {
+    if (isTouchDevice && prefs.steer === "tilt") enableTilt();
+    userLeftFullscreen = false;
+    startImmersive();
+    startTimeTrial();
   });
   element.querySelector('[data-act="online"]').addEventListener("click", () => {
     window.location.href = `${window.location.pathname}?online=host&laps=${prefs.laps}&track=${prefs.track}`;
@@ -1303,7 +1500,7 @@ function showPause() {
     <p class="sub">${solo ? "The race is frozen." : "The race keeps going while this is open."}</p>
     <button type="button" class="big primary" data-act="resume"><strong>Resume</strong></button>
     ${usingTilt() ? '<button type="button" class="big" data-act="recenter"><strong>Recenter tilt</strong><span>Hold the phone the way you like, then tap</span></button>' : ""}
-    ${solo ? '<button type="button" class="big" data-act="restart"><strong>Restart race</strong></button>' : ""}
+    ${solo ? `<button type="button" class="big" data-act="restart"><strong>Restart ${world.mode === "trial" ? "time trial" : "race"}</strong></button>` : ""}
     <a class="big" data-role="menu"><strong>${solo ? "Quit to menu" : "Leave race"}</strong></a>
   `);
   panel.querySelector('[data-role="menu"]').href = window.location.pathname;
@@ -1335,7 +1532,10 @@ function showPause() {
     recenterTilt();
     togglePause();
   });
-  panel.querySelector('[data-act="restart"]')?.addEventListener("click", startSolo);
+  panel.querySelector('[data-act="restart"]')?.addEventListener("click", () => {
+    if (world?.mode === "trial") startTimeTrial();
+    else startSolo();
+  });
   const wrap = document.createElement("div");
   wrap.className = "overlay";
   wrap.append(panel);
@@ -1378,6 +1578,7 @@ function showResults() {
   if (resultsEl) return;
   hidePause();
   paused = false;
+  const trial = world?.mode === "trial";
   const panel = card(`
     <h1 data-role="title"></h1>
     <p class="results-sub" data-role="bestlap"></p>
@@ -1396,10 +1597,15 @@ function showResults() {
     again.textContent = "Waiting for host";
     panel.querySelector('[data-role="note"]').textContent = "The host can start a rematch.";
   } else {
-    again.textContent = online ? "Rematch" : "Race again";
+    again.textContent = trial ? "Try again" : online ? "Rematch" : "Race again";
+    panel.querySelector('[data-role="note"]').textContent = trial
+      ? "Beat the ghost and it is saved on this track."
+      : "";
     again.addEventListener("click", () => {
       if (online) {
         hostStartsRace();
+      } else if (trial) {
+        startTimeTrial();
       } else {
         startSolo();
       }
@@ -1419,20 +1625,36 @@ function fillResults() {
   const order = standings();
   const place = order.indexOf(me) + 1;
   const done = order.every((kart) => kart.finished);
+  const trial = world.mode === "trial";
   const title = resultsEl.querySelector('[data-role="title"]');
-  title.textContent =
-    place === 1 ? (done ? "You won!" : "You finished 1st!") : `You finished ${ordinal(place)}`;
+  title.textContent = trial
+    ? me.bestLap
+      ? `Best lap ${formatTime(me.bestLap)}`
+      : "Time trial"
+    : place === 1
+      ? done
+        ? "You won!"
+        : "You finished 1st!"
+      : `You finished ${ordinal(place)}`;
   const recordLine = resultsEl.querySelector('[data-role="bestlap"]');
   recordLine.replaceChildren();
   if (me.bestLap) {
     const best = document.createElement("span");
     best.textContent = `Your best lap ${formatTime(me.bestLap)}`;
     recordLine.append(best);
+    const medal = medalForLap(world.track, me.bestLap);
+    if (medal) recordLine.append(medalChip(medal));
   }
   if (world.newRecord) {
     const badge = document.createElement("span");
     badge.className = "badge";
     badge.textContent = "New track record";
+    recordLine.append(badge);
+  }
+  if (world.newGhost) {
+    const badge = document.createElement("span");
+    badge.className = "badge ghost";
+    badge.textContent = "New ghost saved";
     recordLine.append(badge);
   }
   const rows = resultsEl.querySelector('[data-role="rows"]');
@@ -1444,7 +1666,7 @@ function fillResults() {
       dot.style.background = kart.color;
       const name = document.createElement("span");
       name.className = "name";
-      name.textContent = `${i + 1}. ${kart.name}`;
+      name.textContent = trial ? kart.name : `${i + 1}. ${kart.name}`;
       const lap = document.createElement("span");
       lap.className = "lap";
       lap.textContent = kart.bestLap ? formatTime(kart.bestLap) : "--:--.---";
@@ -1614,6 +1836,9 @@ function frame(now) {
   const frameDt = Math.min(0.1, (now - last) / 1000);
   last = now;
 
+  // Start on a gamepad opens/closes the pause menu, just like P.
+  if (gamepadPausePressed()) togglePause();
+
   // The physics always advances in equal slices, whatever the screen's frame rate.
   if (!paused) {
     accumulator += frameDt;
@@ -1630,7 +1855,10 @@ function frame(now) {
   updateHud();
   updateAudio();
   if (world) {
-    renderer.draw({ track: world.track, karts: world.karts, me }, paused ? 0 : frameDt);
+    renderer.draw(
+      { track: world.track, karts: world.karts, me, ghost: world.ghostPos },
+      paused ? 0 : frameDt,
+    );
   }
 
   // Slow device? Draw at a lower resolution instead of stuttering.

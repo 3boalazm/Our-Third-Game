@@ -8,6 +8,7 @@ import {
   angleDiff,
   makeKart,
   placeOnGrid,
+  resolveContacts,
   slipstream,
   stepKart,
 } from "../src/game.js";
@@ -185,6 +186,43 @@ test("a boost pad fires once, then waits for its cooldown", () => {
   kart.lastIdx = pad.idx;
   stepKart(kart, straight, FixedStep, track, true);
   assert.equal(kart.padHit, 0, "the same pad must not fire again during the cooldown");
+});
+
+test("karts bump instead of passing through each other", () => {
+  const a = newKart(track);
+  const b = newKart(track);
+  a.x = 1000;
+  a.y = 1000;
+  a.vx = 300;
+  a.vy = 0;
+  a.speed = 300;
+  b.x = 1030;
+  b.y = 1000;
+  b.vx = 0;
+  b.vy = 0;
+  b.speed = 0;
+  resolveContacts([a, b]);
+  const gap = Math.hypot(a.x - b.x, a.y - b.y);
+  assert.ok(gap >= Physics.kartRadius * 2 - 0.01, `still overlapping: ${gap}`);
+  assert.ok(a.speed < 300, "the kart in front should take some of the hit");
+  assert.ok(b.speed > 0, "the kart behind should be shoved forward");
+  assert.ok(a.bump > 0 && b.bump > 0, "both karts should report the bump");
+});
+
+test("the friend's kart only pushes us away, never moves on our screen", () => {
+  const mine = newKart(track);
+  const friend = newKart(track);
+  mine.x = 2000;
+  mine.y = 1200;
+  friend.x = 2000;
+  friend.y = 1230;
+  friend.isRemote = true;
+  const fx = friend.x;
+  const fy = friend.y;
+  resolveContacts([mine, friend]);
+  assert.ok(Math.abs(mine.y - 1200) > 1, "we should be pushed clear");
+  assert.equal(friend.x, fx);
+  assert.equal(friend.y, fy);
 });
 
 test("race progress counts samples forward around the lap", () => {
