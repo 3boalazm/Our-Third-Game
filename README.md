@@ -4,7 +4,7 @@ A small top-down kart racing game for the browser. Race three bots on your own, 
 
 - Two tracks (Sunny Loop, Twisty Hills), 1 / 3 / 5 laps
 - Keyboard: arrows or WASD drive, Down/S brake, **Shift** drift, **Space** nitro, P or Esc pause
-- Phone: the kart accelerates by itself. Left thumb steers; right thumb has Drift, Nitro and Brake
+- Phone: the kart accelerates by itself and you **tilt the phone like a steering wheel**. Only two buttons are used: **Nitro** (right thumb) and **Brake** (left thumb). Drift is automatic when you turn hard. In Controls (start menu) you can switch to on-screen arrows, change tilt sensitivity or direction, or bring back a Drift button. iPhones ask for motion access once; Pause has a "Recenter tilt" button
 - **Drift**: hold Drift while steering through a corner to slide. A clean slide of 0.6 s or more, released on the road, charges the nitro tank and gives a short mini-boost. Crashing or leaving the road cancels the reward
 - **Nitro**: hold to boost (about 3 s from a full tank). The tank slowly refills on its own, much faster with good drifts
 - Sound effects are synthesised in the browser (no audio files); the speaker button mutes them
@@ -19,7 +19,7 @@ npm install
 npm run dev
 ```
 
-Build for production with `npm run build` (output in `dist`). `npm test` checks that every track is a clean loop that does not run into itself and runs the physics tests (acceleration, frame-rate independence, wall, nitro, drift rewards, lap progress) with Node's built-in test runner.
+Build for production with `npm run build` (output in `dist`). `npm test` checks that every track is a clean loop that does not run into itself and runs the physics tests (acceleration, frame-rate independence, wall, nitro, drift rewards, lap progress) and the tilt-angle maths for every screen orientation with Node's built-in test runner.
 
 ## How online play works
 
@@ -35,6 +35,6 @@ Both players connect to a small room relay (a Cloudflare Worker, the same one us
 - `src/audio.js` engine, drift, nitro and crash sounds made with Web Audio
 - `tests/` physics tests
 - `src/render.js` canvas drawing and minimap
-- `src/input.js` keyboard and touch controls
+- `src/input.js` keyboard, touch buttons and tilt (gyroscope) steering
 - `src/online.js` relay client with automatic reconnect
 - `src/main.js` menus, lobby, race flow, results, online messages

@@ -12,11 +12,27 @@ import {
   stepKart,
 } from "./game.js";
 import { createRenderer } from "./render.js";
-import { bindInput, isTouchDevice, readInput, resetInput } from "./input.js";
+import {
+  bindInput,
+  enableTilt,
+  isTouchDevice,
+  readInput,
+  recenterTilt,
+  resetInput,
+  setControls,
+  setTiltOptions,
+  steerNow,
+  tiltNeedsPermission,
+  tiltStatus,
+  tiltSupported,
+  usingTilt,
+} from "./input.js";
 import { audio } from "./audio.js";
 import { createOnlineSession, createRoomId } from "./online.js";
 
 const LapOptions = [1, 3, 5];
+// degrees of phone tilt for full steering lock
+const TiltRanges = { low: 32, normal: 24, high: 17 };
 const CountdownSeconds = 3.2;
 const SendEverySeconds = 0.05;
 
@@ -37,7 +53,12 @@ function readPrefs() {
     laps: LapOptions.includes(laps) ? laps : 3,
     track: trackById(params.get("track") ?? saved.track).id,
     sound: saved.sound !== false,
-    tutorialSeen: saved.tutorialSeen === true,
+    tipSeen: saved.tipSeen === true,
+    // phone controls
+    steer: saved.steer === "buttons" ? "buttons" : "tilt",
+    sensitivity: ["low", "normal", "high"].includes(saved.sensitivity) ? saved.sensitivity : "normal",
+    flip: saved.flip === true,
+    autoDrift: saved.autoDrift !== false,
   };
 }
 const prefs = readPrefs();
@@ -78,14 +99,16 @@ root.innerHTML = `
   <div id="countdown" hidden></div>
   <div id="toast" hidden></div>
   <div id="tip" hidden></div>
+  <button type="button" id="tilt-prompt" hidden>Tap to turn on tilt steering</button>
   <div id="touch" hidden>
+    <div id="tilt-gauge" hidden><i></i></div>
     <div class="touch-left">
-      <button type="button" data-touch="left" aria-label="Steer left">&#9664;</button>
-      <button type="button" data-touch="right" aria-label="Steer right">&#9654;</button>
+      <button type="button" class="brake" data-touch="brake" aria-label="Brake">Brake</button>
+      <button type="button" class="steer" data-touch="left" aria-label="Steer left">&#9664;</button>
+      <button type="button" class="steer" data-touch="right" aria-label="Steer right">&#9654;</button>
     </div>
     <div class="touch-right">
-      <button type="button" class="small" data-touch="brake" aria-label="Brake">Brake</button>
-      <button type="button" class="mid" data-touch="drift" aria-label="Drift">Drift</button>
+      <button type="button" class="mid" id="drift-btn" data-touch="drift" aria-label="Drift" hidden>Drift</button>
       <button type="button" class="large" data-touch="nitro" aria-label="Nitro">Nitro</button>
     </div>
   </div>
@@ -110,11 +133,35 @@ const touchEl = $("touch");
 const screen = $("screen");
 const pauseButton = $("pause-btn");
 const muteButton = $("mute-btn");
+const tiltGauge = $("tilt-gauge");
+const tiltPrompt = $("tilt-prompt");
+const driftButton = $("drift-btn");
 bindInput(touchEl, { onPause: () => togglePause() });
+
+// Apply the phone control settings (steering mode, sensitivity, auto-drift).
+function applyControls() {
+  setControls({ steer: prefs.steer, autoDrift: prefs.autoDrift });
+  setTiltOptions({ range: TiltRanges[prefs.sensitivity], flip: prefs.flip });
+  driftButton.hidden = prefs.autoDrift;
+  document.body.dataset.steer = prefs.steer === "tilt" ? "tilt" : "buttons";
+}
+applyControls();
+// Android needs no permission; iPhones ask on the first tap (see below).
+if (isTouchDevice && prefs.steer === "tilt" && !tiltNeedsPermission()) {
+  enableTilt();
+}
+tiltPrompt.addEventListener("click", async () => {
+  await enableTilt();
+  tiltPrompt.hidden = true;
+  lobbyRefresh();
+});
 
 // Browsers only allow sound after a tap or key press.
 function unlockAudio() {
   audio.unlock();
+  if (isTouchDevice && prefs.steer === "tilt") {
+    enableTilt(); // iPhones only allow this from a tap
+  }
   window.removeEventListener("pointerdown", unlockAudio);
   window.removeEventListener("keydown", unlockAudio);
 }
@@ -196,14 +243,18 @@ function startRace({ trackId, laps, kartsSpec }) {
 
 // One-time hint about the new controls, shown during the first countdown.
 function showTip() {
-  if (prefs.tutorialSeen) {
+  if (prefs.tipSeen) {
     return;
   }
-  prefs.tutorialSeen = true;
+  prefs.tipSeen = true;
   savePrefs();
-  tipEl.textContent = isTouchDevice
-    ? "Hold Drift while steering through a corner, let go to charge Nitro, then hold Nitro on the straights."
-    : "Hold Shift while turning to drift. Let go to charge nitro, then hold Space to boost.";
+  let text = "Hold Shift while turning to drift. Let go to charge nitro, then hold Space to boost.";
+  if (isTouchDevice) {
+    text = prefs.steer === "tilt"
+      ? "Tilt your phone like a wheel to steer. Turn hard to drift, then hold Nitro on the straights."
+      : "Steer with the arrows. Turn hard to drift, then hold Nitro on the straights.";
+  }
+  tipEl.textContent = text;
   tipEl.hidden = false;
   setTimeout(() => {
     tipEl.hidden = true;
@@ -404,6 +455,11 @@ function update(dt, now) {
     if (world.countdown <= 0) {
       world.state = "racing";
       world.goFlash = 0.9;
+      recenterTilt(); // however you are holding the phone right now is "straight"
+      if (isTouchDevice && prefs.steer === "tilt" && !usingTilt()) {
+        toastText = "Tilt not available: use the arrows";
+        toastUntil = performance.now() + 2500;
+      }
       audio.countdown(true);
       setTimeout(() => {
         tipEl.hidden = true;
@@ -507,6 +563,21 @@ function updateHud() {
     toastEl.hidden = true;
   }
 
+  // phone steering: show the tilt gauge, or the arrows when tilt isn't in use
+  const tilting = usingTilt();
+  document.body.dataset.steer = tilting ? "tilt" : "buttons";
+  tiltGauge.hidden = !tilting;
+  if (tilting) {
+    tiltGauge.firstElementChild.style.left = `${50 + steerNow() * 50}%`;
+  }
+  tiltPrompt.hidden = !(
+    isTouchDevice &&
+    prefs.steer === "tilt" &&
+    world.state === "countdown" &&
+    tiltSupported() &&
+    tiltStatus() === "idle"
+  );
+
   if (world.state === "countdown") {
     const n = Math.ceil(world.countdown - 0.2);
     countdownEl.hidden = false;
@@ -583,9 +654,20 @@ function showMenu() {
     <div class="group"><span class="label">Laps</span><div data-slot="laps"></div></div>
     <button type="button" class="big primary" data-act="solo"><strong>Race against bots</strong><span>3 bots, one lap or more</span></button>
     <button type="button" class="big" data-act="online"><strong>Race a friend online</strong><span>Get an invite link, play from anywhere</span></button>
+    ${
+      isTouchDevice
+        ? `<details class="settings">
+        <summary>Controls</summary>
+        <div class="group"><span class="label">Steering</span><div data-slot="steer"></div></div>
+        <div class="group" data-tilt-only><span class="label">Tilt sensitivity</span><div data-slot="sens"></div></div>
+        <div class="group" data-tilt-only><span class="label">Tilt direction</span><div data-slot="flip"></div></div>
+        <div class="group"><span class="label">Drift</span><div data-slot="drift"></div></div>
+      </details>`
+        : ""
+    }
     <p class="hint">${
       isTouchDevice
-        ? "Touch: the kart accelerates by itself. Steer with the arrows, hold Drift in corners, then use Nitro."
+        ? "Phone: tilt to steer, the kart speeds up by itself. Hold Nitro on straights, tap Brake to slow down. Turning hard drifts."
         : "Keyboard: arrows or WASD drive, Shift drifts, Space is nitro, P pauses."
     }</p>
     <a class="footer" href="check.html">Connection check</a>
@@ -618,7 +700,57 @@ function showMenu() {
     );
   };
   renderChoices();
-  element.querySelector('[data-act="solo"]').addEventListener("click", startSolo);
+  if (isTouchDevice) {
+    const renderControls = () => {
+      const set = (key, value) => {
+        prefs[key] = value;
+        savePrefs();
+        applyControls();
+        if (prefs.steer === "tilt") enableTilt();
+        renderControls();
+      };
+      element.querySelector('[data-slot="steer"]').replaceChildren(
+        choice(
+          [{ value: "tilt", text: "Tilt" }, { value: "buttons", text: "Arrows" }],
+          prefs.steer,
+          (value) => set("steer", value),
+          "Steering",
+        ),
+      );
+      element.querySelector('[data-slot="sens"]').replaceChildren(
+        choice(
+          [{ value: "low", text: "Low" }, { value: "normal", text: "Normal" }, { value: "high", text: "High" }],
+          prefs.sensitivity,
+          (value) => set("sensitivity", value),
+          "Tilt sensitivity",
+        ),
+      );
+      element.querySelector('[data-slot="flip"]').replaceChildren(
+        choice(
+          [{ value: false, text: "Normal" }, { value: true, text: "Flipped" }],
+          prefs.flip,
+          (value) => set("flip", value),
+          "Tilt direction",
+        ),
+      );
+      element.querySelector('[data-slot="drift"]').replaceChildren(
+        choice(
+          [{ value: true, text: "Automatic" }, { value: false, text: "Button" }],
+          prefs.autoDrift,
+          (value) => set("autoDrift", value),
+          "Drift",
+        ),
+      );
+      element.querySelectorAll("[data-tilt-only]").forEach((row) => {
+        row.hidden = prefs.steer !== "tilt";
+      });
+    };
+    renderControls();
+  }
+  element.querySelector('[data-act="solo"]').addEventListener("click", () => {
+    if (isTouchDevice && prefs.steer === "tilt") enableTilt();
+    startSolo();
+  });
   element.querySelector('[data-act="online"]').addEventListener("click", () => {
     window.location.href = `${window.location.pathname}?online=host&laps=${prefs.laps}&track=${prefs.track}`;
   });
@@ -649,6 +781,10 @@ function showLobby() {
     <h1>${isHost ? "Invite a friend" : "Joining a race"}</h1>
     <p class="sub" data-role="info"></p>
     <p class="status" data-role="status"></p>
+    <div class="tilt-row" data-role="tilt" hidden>
+      <span></span>
+      <button type="button">Turn on tilt steering</button>
+    </div>
     <div class="invite" data-role="invite" hidden>
       <input type="text" readonly aria-label="Invite link">
       <button type="button" data-role="copy">Copy link</button>
@@ -664,7 +800,28 @@ function showLobby() {
   const input = invite.querySelector("input");
   const startButton = element.querySelector('[data-act="start"]');
 
+  const tiltRow = element.querySelector('[data-role="tilt"]');
+  tiltRow.querySelector("button").addEventListener("click", async () => {
+    await enableTilt();
+    lobbyRefresh();
+  });
   lobbyRefresh = () => {
+    // phone: say whether tilt steering is ready (iPhones need a tap to allow it)
+    const wantsTilt = isTouchDevice && prefs.steer === "tilt";
+    tiltRow.hidden = !wantsTilt;
+    if (wantsTilt) {
+      const status = tiltStatus();
+      const ready = status === "granted";
+      const unavailable = status === "unsupported" || !tiltSupported();
+      tiltRow.querySelector("span").textContent = ready
+        ? "Tilt steering is ready"
+        : unavailable
+          ? "No motion sensor: you will steer with the arrows"
+          : status === "denied"
+            ? "Tilt was blocked: you will steer with the arrows"
+            : "Tilt steering needs your OK";
+      tiltRow.querySelector("button").hidden = ready || unavailable || status === "denied";
+    }
     status.textContent = netState === "error" ? netDetail || "Connection problem." : netText[netState] ?? "";
     status.dataset.state = netState;
     info.textContent = isHost
@@ -697,7 +854,10 @@ function showLobby() {
       navigator.share({ title: "Kart Race", url: input.value }).catch(() => {});
     });
   }
-  startButton.addEventListener("click", hostStartsRace);
+  startButton.addEventListener("click", () => {
+    if (isTouchDevice && prefs.steer === "tilt") enableTilt();
+    hostStartsRace();
+  });
 
   showScreen(element);
   lobbyRefresh();
@@ -745,11 +905,16 @@ function showPause() {
     <h1>${solo ? "Paused" : "Race menu"}</h1>
     <p class="sub">${solo ? "The race is frozen." : "The race keeps going while this is open."}</p>
     <button type="button" class="big primary" data-act="resume"><strong>Resume</strong></button>
+    ${usingTilt() ? '<button type="button" class="big" data-act="recenter"><strong>Recenter tilt</strong><span>Hold the phone the way you like, then tap</span></button>' : ""}
     ${solo ? '<button type="button" class="big" data-act="restart"><strong>Restart race</strong></button>' : ""}
     <a class="big" data-role="menu"><strong>${solo ? "Quit to menu" : "Leave race"}</strong></a>
   `);
   panel.querySelector('[data-role="menu"]').href = window.location.pathname;
   panel.querySelector('[data-act="resume"]').addEventListener("click", () => togglePause());
+  panel.querySelector('[data-act="recenter"]')?.addEventListener("click", () => {
+    recenterTilt();
+    togglePause();
+  });
   panel.querySelector('[data-act="restart"]')?.addEventListener("click", startSolo);
   const wrap = document.createElement("div");
   wrap.className = "overlay";

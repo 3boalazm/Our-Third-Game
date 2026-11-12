@@ -1,21 +1,143 @@
-// Keyboard + on-screen touch buttons.
+// Keyboard + phone controls.
 //
 // Keyboard: arrows / WASD to drive, Shift = drift, Space = nitro, P or Esc = pause.
-// Phone: the kart accelerates by itself; left thumb steers, right thumb drifts
-// and boosts. Steering is smoothed so a tap is a gentle nudge and a hold is a
-// full turn, instead of an on/off switch.
+//
+// Phone (default): the kart accelerates by itself and you steer by TILTING the
+// phone like a steering wheel. The only buttons used all the time are Nitro and
+// Brake. Drift is automatic when you turn hard (it can be switched back to a
+// button in the settings). If the phone has no motion sensor, or you pick
+// "Buttons", on-screen arrows steer instead.
 
 const keys = new Set();
 const touch = { left: false, right: false, brake: false, drift: false, nitro: false };
 let handlers = null;
 let steerValue = 0;
+let autoDriftOn = false;
 
 const SteerPress = 7; // units per second toward full lock while a direction is held
 const SteerRelease = 12; // units per second back to centre after letting go
+const TiltFollow = 14; // how quickly the kart follows the tilt of the phone
+const AutoDriftOn = 0.72; // steering beyond this starts a drift (auto-drift)
+const AutoDriftOff = 0.55; // ... and it ends below this
 
 export const isTouchDevice =
   typeof window !== "undefined" &&
   (window.matchMedia?.("(pointer: coarse)").matches || "ontouchstart" in window);
+
+// ---------- tilt (gyroscope) ----------
+
+// Degrees the screen's right edge is lowered by, whatever the phone's pose
+// (held upright and turned like a wheel, held flat and rolled, portrait or
+// landscape). beta/gamma come from the deviceorientation event and `angle` is
+// the screen rotation (0, 90, 180, 270).
+//
+// The gravity direction in the phone's own axes is
+//   (sin(gamma) * cos(beta), -sin(beta), -cos(gamma) * cos(beta))
+// and we take its component along the screen's "right" direction.
+export function tiltFromGravity(beta, gamma, angle = 0) {
+  const b = (beta * Math.PI) / 180;
+  const g = (gamma * Math.PI) / 180;
+  const gx = Math.sin(g) * Math.cos(b);
+  const gy = -Math.sin(b);
+  const turns = ((Math.round(angle / 90) % 4) + 4) % 4;
+  // The screen's right direction expressed in the phone's axes.
+  const along = [gx, -gy, -gx, gy][turns];
+  return (Math.asin(Math.max(-1, Math.min(1, along))) * 180) / Math.PI;
+}
+
+function screenAngle() {
+  if (typeof screen !== "undefined" && screen.orientation) {
+    return screen.orientation.angle;
+  }
+  return typeof window !== "undefined" && typeof window.orientation === "number"
+    ? window.orientation
+    : 0;
+}
+
+const tilt = {
+  status: "idle", // idle | granted | denied | unsupported
+  listening: false,
+  raw: 0, // degrees, filtered
+  neutral: 0,
+  lastEvent: 0,
+  range: 24, // degrees of tilt for full lock
+  flip: false,
+};
+
+export function tiltSupported() {
+  return typeof window !== "undefined" && "DeviceOrientationEvent" in window;
+}
+
+// iPhones ask for permission, and only from a tap.
+export function tiltNeedsPermission() {
+  return (
+    tiltSupported() && typeof window.DeviceOrientationEvent.requestPermission === "function"
+  );
+}
+
+function onOrientation(event) {
+  if (event.beta == null || event.gamma == null) {
+    return;
+  }
+  const degrees = tiltFromGravity(event.beta, event.gamma, screenAngle());
+  tilt.raw += (degrees - tilt.raw) * 0.5; // light smoothing against sensor noise
+  tilt.lastEvent = performance.now();
+}
+
+export async function enableTilt() {
+  if (!tiltSupported()) {
+    tilt.status = "unsupported";
+    return tilt.status;
+  }
+  if (tiltNeedsPermission() && tilt.status !== "granted") {
+    try {
+      const answer = await window.DeviceOrientationEvent.requestPermission();
+      tilt.status = answer === "granted" ? "granted" : "denied";
+    } catch {
+      tilt.status = "denied";
+    }
+  } else if (tilt.status !== "denied") {
+    tilt.status = "granted";
+  }
+  if (tilt.status === "granted" && !tilt.listening) {
+    window.addEventListener("deviceorientation", onOrientation);
+    tilt.listening = true;
+  }
+  return tilt.status;
+}
+
+export function recenterTilt() {
+  tilt.neutral = tilt.raw;
+}
+
+export function setTiltOptions({ range, flip }) {
+  if (range) tilt.range = range;
+  if (flip !== undefined) tilt.flip = flip;
+}
+
+// True while the sensor is really delivering readings.
+export function tiltAlive() {
+  return tilt.status === "granted" && performance.now() - tilt.lastEvent < 700;
+}
+
+export function tiltStatus() {
+  return tilt.status;
+}
+
+// -1..1 as the kart currently sees it (for the on-screen gauge).
+export function steerNow() {
+  return steerValue;
+}
+
+// ---------- settings that change how input is read ----------
+
+const controls = { steer: "tilt", autoDrift: true };
+
+export function setControls(next) {
+  Object.assign(controls, next);
+}
+
+// ---------- binding ----------
 
 export function bindInput(touchRoot, { onPause } = {}) {
   unbindInput();
@@ -79,27 +201,53 @@ export function unbindInput() {
   handlers = null;
   keys.clear();
   steerValue = 0;
+  autoDriftOn = false;
 }
 
 export function resetInput() {
   steerValue = 0;
+  autoDriftOn = false;
   Object.keys(touch).forEach((k) => (touch[k] = false));
+}
+
+// True when the steering comes from the phone's motion sensor right now.
+export function usingTilt() {
+  return isTouchDevice && controls.steer === "tilt" && tiltAlive();
 }
 
 // dt is the fixed physics step, so steering feels the same at any frame rate.
 export function readInput(dt) {
-  const left = keys.has("ArrowLeft") || keys.has("KeyA") || touch.left;
-  const right = keys.has("ArrowRight") || keys.has("KeyD") || touch.right;
-  const target = (right ? 1 : 0) - (left ? 1 : 0);
-  const rate = target === 0 || Math.sign(target) !== Math.sign(steerValue) ? SteerRelease : SteerPress;
-  const delta = target - steerValue;
-  steerValue += Math.sign(delta) * Math.min(Math.abs(delta), rate * dt);
+  if (usingTilt()) {
+    let degrees = tilt.raw - tilt.neutral;
+    if (tilt.flip) degrees = -degrees;
+    const dead = 2; // ignore tiny wobbles around the centre
+    degrees = Math.abs(degrees) < dead ? 0 : degrees - Math.sign(degrees) * dead;
+    const target = Math.max(-1, Math.min(1, degrees / (tilt.range - dead)));
+    steerValue += (target - steerValue) * Math.min(1, TiltFollow * dt);
+  } else {
+    const left = keys.has("ArrowLeft") || keys.has("KeyA") || touch.left;
+    const right = keys.has("ArrowRight") || keys.has("KeyD") || touch.right;
+    const target = (right ? 1 : 0) - (left ? 1 : 0);
+    const rate =
+      target === 0 || Math.sign(target) !== Math.sign(steerValue) ? SteerRelease : SteerPress;
+    const delta = target - steerValue;
+    steerValue += Math.sign(delta) * Math.min(Math.abs(delta), rate * dt);
+  }
+
+  // Auto-drift: turning hard drifts (with a little hysteresis so it doesn't flicker).
+  if (isTouchDevice && controls.autoDrift) {
+    const sharp = Math.abs(steerValue);
+    autoDriftOn = autoDriftOn ? sharp > AutoDriftOff : sharp > AutoDriftOn;
+  } else {
+    autoDriftOn = false;
+  }
 
   return {
     steer: steerValue,
     brake: keys.has("ArrowDown") || keys.has("KeyS") || touch.brake,
     gas: keys.has("ArrowUp") || keys.has("KeyW") || isTouchDevice,
-    drift: keys.has("ShiftLeft") || keys.has("ShiftRight") || keys.has("KeyZ") || touch.drift,
+    drift:
+      keys.has("ShiftLeft") || keys.has("ShiftRight") || keys.has("KeyZ") || touch.drift || autoDriftOn,
     nitro: keys.has("Space") || keys.has("KeyX") || touch.nitro,
   };
 }

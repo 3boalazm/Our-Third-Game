@@ -234,14 +234,19 @@ input {
 /* ---------- landscape phones ---------- */
 
 @media (max-height: 520px) and (orientation: landscape) {
-  .touch-left button {
-    width: 70px;
-    height: 70px;
+  .touch-left .steer {
+    width: 66px;
+    height: 66px;
+  }
+
+  body[data-steer="tilt"] .touch-left .brake {
+    width: 76px;
+    height: 76px;
   }
 
   .touch-right .large {
-    width: 84px;
-    height: 84px;
+    width: 88px;
+    height: 88px;
   }
 
   .touch-right .mid {
@@ -284,17 +289,16 @@ input {
 }
 
 .touch-left {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-}
-
-/* brake above drift, nitro tall on the right: fits 360px-wide phones */
-.touch-right {
   display: grid;
   grid-template-columns: auto auto;
   align-items: end;
-  gap: 8px 10px;
+  gap: 8px 12px;
+}
+
+.touch-right {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
 }
 
 #touch button {
@@ -308,16 +312,23 @@ input {
   pointer-events: auto;
 }
 
-.touch-left button {
+#touch button[hidden] {
+  display: none;
+}
+
+/* arrows (only used when tilt steering is off or unavailable) */
+.touch-left .steer {
+  grid-row: 2;
   width: min(84px, 19vw);
   height: min(84px, 19vw);
   border-radius: 50%;
   font-size: 28px;
 }
 
-.touch-right .small {
-  grid-column: 1;
+/* brake: a small pill above the arrows ... */
+.touch-left .brake {
   grid-row: 1;
+  grid-column: 1 / span 2;
   justify-self: start;
   width: min(66px, 17vw);
   height: 40px;
@@ -325,9 +336,21 @@ input {
   font-size: 13px;
 }
 
-.touch-right .mid {
+/* ... or a big round button for the left thumb when tilting */
+body[data-steer="tilt"] .touch-left .steer {
+  display: none;
+}
+
+body[data-steer="tilt"] .touch-left .brake {
+  grid-row: 1;
   grid-column: 1;
-  grid-row: 2;
+  width: min(92px, 23vw);
+  height: min(92px, 23vw);
+  border-radius: 50%;
+  font-size: 16px;
+}
+
+.touch-right .mid {
   width: min(76px, 19vw);
   height: min(76px, 19vw);
   border-color: rgb(127 209 255 / 80%);
@@ -337,14 +360,112 @@ input {
 }
 
 .touch-right .large {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  width: min(100px, 24vw);
-  height: min(100px, 24vw);
+  width: min(104px, 26vw);
+  height: min(104px, 26vw);
   border-color: rgb(255 170 60 / 80%);
   border-radius: 50%;
   background: rgb(255 120 40 / 45%);
-  font-size: 17px;
+  font-size: 18px;
+}
+
+#tilt-gauge {
+  position: absolute;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  left: 50%;
+  width: min(120px, 28vw);
+  height: 6px;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 22%);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+#tilt-gauge::before {
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  width: 2px;
+  height: 12px;
+  background: rgb(255 255 255 / 55%);
+  content: "";
+}
+
+#tilt-gauge i {
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 6px rgb(0 0 0 / 50%);
+}
+
+#tilt-gauge[hidden] {
+  display: none;
+}
+
+#tilt-prompt {
+  position: absolute;
+  top: 46%;
+  left: 50%;
+  padding: 14px 20px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  transform: translateX(-50%);
+}
+
+.settings {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-2);
+}
+
+.settings summary {
+  color: var(--soft);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings .group {
+  margin-top: 10px;
+}
+
+.settings .group[hidden] {
+  display: none;
+}
+
+.tilt-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--card-2);
+  font-size: 14px;
+}
+
+.tilt-row button {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--blue);
+  color: #fff;
+  font-weight: 700;
+}
+
+.tilt-row[hidden],
+.tilt-row button[hidden] {
+  display: none;
 }
 
 #touch button.pressed {
