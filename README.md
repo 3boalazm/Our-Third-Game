@@ -2,7 +2,8 @@
 
 A small top-down kart racing game for the browser. Race three bots on your own, or race a friend online from anywhere (phone or computer).
 
-- Two tracks (Sunny Loop, Twisty Hills), 1 / 3 / 5 laps
+- Two tracks (Sunny Loop, Twisty Hills), 1 / 3 / 5 laps. Wide roads (about 290 px) with gentle bends: `npm test` fails if any bend is tighter than 250 px
+- **Camera:** by default the camera sits behind the kart, so the road ahead always runs up the screen (also in landscape). "Fixed map" (Controls or the Pause menu, or the C key) keeps the map still instead
 - Keyboard: arrows or WASD drive, Down/S brake, **Shift** drift, **Space** nitro, P or Esc pause
 - Phone: the kart accelerates by itself and you **tilt the phone like a steering wheel**. Only two buttons are used: **Nitro** (right thumb) and **Brake** (left thumb). Drift is automatic when you turn hard. In Controls (start menu) you can switch to on-screen arrows, set the **tilt sensitivity** (1-10 slider, also in the Pause menu), flip the tilt direction, bring back a Drift button, or choose **Landscape** (fullscreen + screen lock where the browser allows it; on iPhone a "turn your phone" card is shown). iPhones ask for motion access once; Pause has a "Recenter tilt" button
 - **Drift**: hold Drift while steering through a corner to slide. A clean slide of 0.6 s or more, released on the road, charges the nitro tank and gives a short mini-boost. Crashing or leaving the road cancels the reward

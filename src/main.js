@@ -3,6 +3,7 @@ import { Tracks, buildTrack, trackById } from "./track.js";
 import {
   FixedStep,
   KartColors,
+  KartScale,
   Physics,
   angleDiff,
   botInput,
@@ -73,6 +74,7 @@ function readPrefs() {
     tiltSens: readSens(saved),
     screenMode: saved.screenMode === "landscape" ? "landscape" : "auto",
     fullscreen: saved.fullscreen !== false,
+    camera: saved.camera === "fixed" ? "fixed" : "chase",
     flip: saved.flip === true,
     autoDrift: saved.autoDrift !== false,
   };
@@ -211,6 +213,11 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "KeyF" && !event.repeat && document.fullscreenEnabled) {
     toggleFullscreen();
   }
+  if (event.code === "KeyC" && !event.repeat) {
+    prefs.camera = prefs.camera === "chase" ? "fixed" : "chase";
+    savePrefs();
+    applyControls();
+  }
 });
 
 // A tap during a race re-tries fullscreen (the first tap may have been used for permissions).
@@ -227,6 +234,7 @@ function applyControls() {
   setTiltOptions({ range: tiltRangeFor(prefs.tiltSens), flip: prefs.flip });
   driftButton.hidden = prefs.autoDrift;
   setForceLandscape(prefs.screenMode === "landscape");
+  renderer.setCameraMode(prefs.camera);
   document.body.dataset.steer = prefs.steer === "tilt" ? "tilt" : "buttons";
 }
 applyControls();
@@ -439,15 +447,16 @@ function emitEffects(kart) {
   const fx = renderer.particles;
   const cos = Math.cos(kart.a);
   const sin = Math.sin(kart.a);
-  const rearX = kart.x - cos * 22;
-  const rearY = kart.y - sin * 22;
+  const rear = 22 * KartScale;
+  const rearX = kart.x - cos * rear;
+  const rearY = kart.y - sin * rear;
 
   if (kart.drifting && kart.speed > 180) {
     for (const side of [-1, 1]) {
       fx.emit(
         "smoke",
-        rearX - sin * side * 11,
-        rearY + cos * side * 11,
+        rearX - sin * side * 11 * KartScale,
+        rearY + cos * side * 11 * KartScale,
         rand(40) - cos * 30,
         rand(40) - sin * 30,
         0.55,
@@ -705,6 +714,33 @@ function showScreen(element) {
   screen.replaceChildren(element);
 }
 
+// "Camera" setting: behind the kart (road ahead is up) or a fixed map.
+function cameraGroup() {
+  const group = document.createElement("div");
+  group.className = "group";
+  const label = document.createElement("span");
+  label.className = "label";
+  label.textContent = "Camera";
+  const holder = document.createElement("div");
+  const render = () =>
+    holder.replaceChildren(
+      choice(
+        [{ value: "chase", text: "Behind the kart" }, { value: "fixed", text: "Fixed map" }],
+        prefs.camera,
+        (value) => {
+          prefs.camera = value;
+          savePrefs();
+          applyControls();
+          render();
+        },
+        "Camera",
+      ),
+    );
+  render();
+  group.append(label, holder);
+  return group;
+}
+
 // A labelled range slider. onInput runs while dragging, onChange when released.
 function slider({ min, max, value, label, onInput, onChange }) {
   const row = document.createElement("div");
@@ -775,6 +811,7 @@ function showMenu() {
         <div class="group" data-tilt-only><span class="label">Tilt sensitivity <small>(higher = turns with less tilt)</small></span><div data-slot="sens"></div></div>
         <div class="group" data-tilt-only><span class="label">Tilt direction</span><div data-slot="flip"></div></div>
         <div class="group"><span class="label">Drift</span><div data-slot="drift"></div></div>
+        <div class="group"><span class="label">Camera</span><div data-slot="camera"></div></div>
         <div class="group"><span class="label">Screen <small>(Landscape turns the game sideways by itself, even if your phone is locked upright)</small></span><div data-slot="screen"></div></div>
         <div class="group"><span class="label">Fullscreen</span><div data-slot="fullscreen"></div></div>
       </details>`
@@ -783,7 +820,7 @@ function showMenu() {
     <p class="hint">${
       isTouchDevice
         ? "Phone: tilt to steer, the kart speeds up by itself. Hold Nitro on straights, tap Brake to slow down. Turning hard drifts."
-        : "Keyboard: arrows or WASD drive, Shift drifts, Space is nitro, P pauses."
+        : "Keyboard: arrows or WASD drive, Shift drifts, Space is nitro, P pauses, C switches the camera."
     }</p>
     <a class="footer" href="check.html">Connection check</a>
   `);
@@ -859,6 +896,14 @@ function showMenu() {
           prefs.autoDrift,
           (value) => set("autoDrift", value),
           "Drift",
+        ),
+      );
+      element.querySelector('[data-slot="camera"]').replaceChildren(
+        choice(
+          [{ value: "chase", text: "Behind the kart" }, { value: "fixed", text: "Fixed map" }],
+          prefs.camera,
+          (value) => set("camera", value),
+          "Camera",
         ),
       );
       element.querySelector('[data-slot="screen"]').replaceChildren(
@@ -1089,6 +1134,7 @@ function showPause() {
     );
     panel.querySelector('[data-act="resume"]').before(group);
   }
+  panel.querySelector('[data-act="resume"]').before(cameraGroup());
   panel.querySelector('[data-act="resume"]').addEventListener("click", () => togglePause());
   panel.querySelector('[data-act="recenter"]')?.addEventListener("click", () => {
     recenterTilt();

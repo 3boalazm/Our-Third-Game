@@ -6,7 +6,9 @@ export const Tracks = [
   {
     id: "sunny",
     name: "Sunny Loop",
-    width: 205,
+    width: 290,
+    scale: 1.75, // the control points below are drawn small; this sets the real size
+    smooth: 600, // rounds off tight bends (see smooth() below)
     points: [
       [600, 400], [1400, 300], [2200, 380], [2750, 750], [2650, 1250],
       [2000, 1400], [1700, 1000], [1300, 1100], [1400, 1650], [900, 1800],
@@ -16,7 +18,9 @@ export const Tracks = [
   {
     id: "twisty",
     name: "Twisty Hills",
-    width: 195,
+    width: 280,
+    scale: 1.75,
+    smooth: 600,
     points: [
       [500, 450], [1200, 250], [1750, 650], [2400, 300], [2950, 700],
       [2900, 1250], [2500, 1300], [2450, 1700], [2150, 2000], [1500, 2000],
@@ -43,34 +47,18 @@ function catmull(p0, p1, p2, p3, t) {
 
 const Spacing = 14;
 
-export function buildTrack(def) {
-  const points = def.points;
-  const count = points.length;
-  const dense = [];
-  for (let i = 0; i < count; i += 1) {
-    for (let step = 0; step < 24; step += 1) {
-      dense.push(
-        catmull(
-          points[(i - 1 + count) % count],
-          points[i],
-          points[(i + 1) % count],
-          points[(i + 2) % count],
-          step / 24,
-        ),
-      );
-    }
-  }
-
+// Evenly spaced points along a closed polyline.
+function resample(poly, spacing) {
+  const n = poly.length;
   const cumulative = [0];
-  for (let i = 0; i < dense.length; i += 1) {
-    const a = dense[i];
-    const b = dense[(i + 1) % dense.length];
-    cumulative.push(cumulative[i] + Math.hypot(b[0] - a[0], b[1] - a[1]));
+  for (let i = 0; i < n; i += 1) {
+    const a = poly[i];
+    const b = poly[(i + 1) % n];
+    cumulative.push(cumulative[i] + Math.hypot(b.x - a.x, b.y - a.y));
   }
-  const length = cumulative[cumulative.length - 1];
-  const N = Math.round(length / Spacing);
-
-  const samples = [];
+  const length = cumulative[n];
+  const N = Math.round(length / spacing);
+  const out = [];
   let j = 0;
   for (let k = 0; k < N; k += 1) {
     const target = (k * length) / N;
@@ -78,10 +66,53 @@ export function buildTrack(def) {
       j += 1;
     }
     const f = (target - cumulative[j]) / (cumulative[j + 1] - cumulative[j]);
-    const a = dense[j];
-    const b = dense[(j + 1) % dense.length];
-    samples.push({ x: a[0] + (b[0] - a[0]) * f, y: a[1] + (b[1] - a[1]) * f, tx: 0, ty: 0 });
+    const a = poly[j];
+    const b = poly[(j + 1) % n];
+    out.push({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f });
   }
+  return { points: out, length, N };
+}
+
+// Rounds off tight bends: every pass pulls each point towards the average of
+// its neighbours (a smoothing of the whole loop, so no corner stays sharp).
+function smooth(points, passes) {
+  let current = points;
+  for (let pass = 0; pass < passes; pass += 1) {
+    const n = current.length;
+    current = current.map((pt, i) => {
+      const a = current[(i - 1 + n) % n];
+      const b = current[(i + 1) % n];
+      return { x: (a.x + 2 * pt.x + b.x) / 4, y: (a.y + 2 * pt.y + b.y) / 4 };
+    });
+  }
+  return current;
+}
+
+export function buildTrack(def) {
+  const scale = def.scale ?? 1;
+  const points = def.points.map(([x, y]) => [x * scale, y * scale]);
+  const count = points.length;
+  const dense = [];
+  for (let i = 0; i < count; i += 1) {
+    for (let step = 0; step < 24; step += 1) {
+      const [x, y] = catmull(
+        points[(i - 1 + count) % count],
+        points[i],
+        points[(i + 1) % count],
+        points[(i + 2) % count],
+        step / 24,
+      );
+      dense.push({ x, y });
+    }
+  }
+
+  let even = resample(dense, Spacing).points;
+  if (def.smooth) {
+    even = smooth(even, def.smooth);
+  }
+  const resampled = resample(even, Spacing);
+  const { length, N } = resampled;
+  const samples = resampled.points.map((p) => ({ x: p.x, y: p.y, tx: 0, ty: 0 }));
 
   let minX = Infinity;
   let minY = Infinity;

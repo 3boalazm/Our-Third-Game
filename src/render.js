@@ -1,4 +1,4 @@
-import { Physics } from "./game.js";
+import { KartScale, Physics, angleDiff } from "./game.js";
 import { createParticles } from "./particles.js";
 import { viewport } from "./layout.js";
 
@@ -7,7 +7,11 @@ const GrassLine = "rgba(0, 0, 0, 0.07)";
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext("2d");
-  const cam = { x: 0, y: 0, zoom: 1, ready: false };
+  // "chase": the camera sits behind the kart, so the road ahead always runs up the
+  // screen. "fixed": the map stays put and the kart turns on it.
+  let cameraMode = "chase";
+  const AheadWorld = 640; // road (in world pixels) we want to see in front of the kart
+  const cam = { x: 0, y: 0, zoom: 1, angle: 0, ready: false };
   const particles = createParticles();
   let width = 0;
   let height = 0;
@@ -68,6 +72,7 @@ export function createRenderer(canvas) {
     ctx.save();
     ctx.translate(kart.x, kart.y);
     ctx.rotate(kart.a);
+    ctx.scale(KartScale, KartScale);
     // shadow
     ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
     ctx.beginPath();
@@ -113,13 +118,18 @@ export function createRenderer(canvas) {
   }
 
   function drawName(kart) {
+    ctx.save();
+    ctx.translate(kart.x, kart.y);
+    // keep the text upright even though the whole world is turned by the chase camera
+    ctx.rotate(cameraMode === "chase" ? cam.angle + Math.PI / 2 : 0);
     ctx.font = "600 15px system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.lineWidth = 4;
     ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
-    ctx.strokeText(kart.name, kart.x, kart.y - 30);
+    ctx.strokeText(kart.name, 0, -30 * KartScale);
     ctx.fillStyle = "#fff";
-    ctx.fillText(kart.name, kart.x, kart.y - 30);
+    ctx.fillText(kart.name, 0, -30 * KartScale);
+    ctx.restore();
   }
 
   function drawMinimap(track, karts, me) {
@@ -160,18 +170,32 @@ export function createRenderer(canvas) {
 
   function draw({ track, karts, me }, dt) {
     const focus = me ?? karts[0];
+    const chase = cameraMode === "chase";
     if (!cam.ready) {
       cam.x = focus.x;
       cam.y = focus.y;
+      cam.angle = focus.a;
       cam.ready = true;
     }
-    const follow = Math.min(1, dt * 7);
+    const follow = Math.min(1, dt * (chase ? 10 : 7));
     cam.x += (focus.x - cam.x) * follow;
     cam.y += (focus.y - cam.y) * follow;
+    if (chase) {
+      cam.angle += angleDiff(focus.a, cam.angle) * Math.min(1, dt * 6);
+    } else {
+      cam.angle = focus.a; // so switching to the chase camera starts from the right angle
+    }
     // zoom out a little at speed so you can see further ahead
     const zoomTarget = 1 - 0.16 * Math.min(1, focus.speed / Physics.maxSpeed);
     cam.zoom += (zoomTarget - cam.zoom) * Math.min(1, dt * 2);
-    const scale = Math.max(0.35, Math.min(width, height) / 760) * cam.zoom * 1.14;
+    let fit = Math.max(0.35, Math.min(width, height) / 760) * 1.14;
+    // On a short (landscape) screen the kart sits low and only ~70% of the height is
+    // road ahead: zoom out enough to still see a good stretch of it.
+    if (chase) {
+      fit = Math.min(fit, (0.72 * height) / AheadWorld);
+    }
+    const scale = fit * cam.zoom;
+    const anchorY = chase ? height * 0.72 : height / 2;
 
     shakeAmount *= Math.exp(-9 * dt);
     const shakeX = shakeAmount > 0.2 ? (Math.random() - 0.5) * shakeAmount : 0;
@@ -183,24 +207,26 @@ export function createRenderer(canvas) {
     ctx.fillRect(0, 0, width, height);
 
     ctx.save();
-    ctx.translate(width / 2 + shakeX, height / 2 + shakeY);
+    ctx.translate(width / 2 + shakeX, anchorY + shakeY);
     ctx.scale(scale, scale);
+    if (chase) {
+      ctx.rotate(-Math.PI / 2 - cam.angle); // the kart's heading points up the screen
+    }
     ctx.translate(-cam.x, -cam.y);
 
-    // faint grid so you can feel the speed on the grass
+    // faint grid so you can feel the speed on the grass (a square that covers any rotation)
     const grid = 180;
-    const halfW = width / 2 / scale;
-    const halfH = height / 2 / scale;
+    const reach = Math.hypot(width, height) / scale + grid;
     ctx.strokeStyle = GrassLine;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    for (let x = Math.floor((cam.x - halfW) / grid) * grid; x < cam.x + halfW; x += grid) {
-      ctx.moveTo(x, cam.y - halfH);
-      ctx.lineTo(x, cam.y + halfH);
+    for (let x = Math.floor((cam.x - reach) / grid) * grid; x < cam.x + reach; x += grid) {
+      ctx.moveTo(x, cam.y - reach);
+      ctx.lineTo(x, cam.y + reach);
     }
-    for (let y = Math.floor((cam.y - halfH) / grid) * grid; y < cam.y + halfH; y += grid) {
-      ctx.moveTo(cam.x - halfW, y);
-      ctx.lineTo(cam.x + halfW, y);
+    for (let y = Math.floor((cam.y - reach) / grid) * grid; y < cam.y + reach; y += grid) {
+      ctx.moveTo(cam.x - reach, y);
+      ctx.lineTo(cam.x + reach, y);
     }
     ctx.stroke();
 
@@ -247,6 +273,9 @@ export function createRenderer(canvas) {
     draw,
     resize,
     particles,
+    setCameraMode(mode) {
+      cameraMode = mode === "fixed" ? "fixed" : "chase";
+    },
     shake(amount) {
       shakeAmount = Math.max(shakeAmount, amount);
     },

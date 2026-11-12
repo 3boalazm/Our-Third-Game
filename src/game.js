@@ -4,6 +4,10 @@ import { nearest } from "./track.js";
 // advances in FixedStep slices so it behaves the same at any frame rate.
 export const FixedStep = 1 / 60;
 
+// The karts are drawn this much bigger than their "physical" size (cosmetic only),
+// so they stay easy to see on the wide roads.
+export const KartScale = 1.35;
+
 export const Physics = {
   maxSpeed: 560,
   accel: 460,
