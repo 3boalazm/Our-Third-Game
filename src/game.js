@@ -54,9 +54,15 @@ export const Physics = {
   draftAhead: 230, // how far behind a kart the air is still disturbed
   draftSide: 72,
   draftMinSpeed: 240,
+
+  // Kart-to-kart contact: a soft circle around each kart. Rubbing wheels costs
+  // a little speed and shoves both karts apart, but never stops the race.
+  kartRadius: 25,
+  bumpRestitution: 0.45,
 };
 
 export const KartColors = ["#4f6bff", "#ff5a5f", "#2bb673", "#f5a623", "#a259ff", "#14b8c4"];
+export const LiveryOptions = ["stripe", "twin", "clean"];
 
 export function makeKart({
   id,
@@ -66,11 +72,13 @@ export function makeKart({
   skill = 1,
   isMe = false,
   isRemote = false,
+  livery = "stripe",
 }) {
   return {
     id,
     name,
     color,
+    livery: LiveryOptions.includes(livery) ? livery : "stripe",
     bot,
     skill,
     isMe, // the kart this browser drives
@@ -106,6 +114,13 @@ export function makeKart({
     hit: 0, // wall impact speed this step
     driftReward: 0, // seconds of the slide that was just paid out
     padHit: 0, // drove over a boost pad this step
+    bump: 0, // speed of a kart-to-kart hit this step (for sound and sparks)
+    // weather multipliers (set by applyWeather; all 1 in clear weather)
+    grip: 1,
+    topScale: 1,
+    accelScale: 1,
+    steerScale: 1,
+    rubber: 1, // bot rubber-banding, and 1 for every human kart
   };
 }
 
@@ -136,6 +151,7 @@ export function placeOnGrid(kart, track, slot) {
   kart.hit = 0;
   kart.driftReward = 0;
   kart.padHit = 0;
+  kart.bump = 0;
   kart.drafting = false;
   kart.draft = 0;
   kart.padCooldown = 0;
@@ -212,11 +228,20 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
     power = Math.max(power, 1 + P.draftTop * draft);
     thrust = Math.max(thrust, 1 + P.draftAccel * draft);
   }
-  const top = P.maxSpeed * kart.skill * (onRoad ? 1 : P.offRoadFactor) * power;
+  const rubber = kart.bot ? (kart.rubber ?? 1) : 1;
+  const top =
+    P.maxSpeed *
+    kart.skill *
+    (onRoad ? 1 : P.offRoadFactor) *
+    power *
+    (kart.topScale ?? 1) *
+    rubber;
 
   // --- throttle / brake ---
   if (canDrive && (input.gas || kart.nitroOn) && !input.brake) {
-    if (along < top) along = Math.min(top, along + P.accel * thrust * dt);
+    if (along < top) {
+      along = Math.min(top, along + P.accel * thrust * (kart.accelScale ?? 1) * dt);
+    }
   } else if (canDrive && input.brake) {
     along = Math.max(-P.reverseMax, along - P.brake * dt);
   } else {
@@ -246,14 +271,14 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
     kart.driftTime = 0;
   }
   kart.drifting = drifting;
-  side *= Math.exp(-(drifting ? P.driftGrip : P.grip) * dt);
+  side *= Math.exp(-(drifting ? P.driftGrip : P.grip) * (kart.grip ?? 1) * dt);
 
   // --- steering ---
   const control = clamp(Math.abs(along) / 170, 0, 1);
   const slowDown = 1 - 0.3 * clamp(Math.abs(along) / P.maxSpeed, 0, 1);
   kart.a +=
     steer * P.turnRate * (drifting ? P.driftTurn : 1) * control * slowDown *
-    (along >= 0 ? 1 : -1) * dt;
+    (kart.steerScale ?? 1) * (along >= 0 ? 1 : -1) * dt;
 
   // Rebuild the velocity with the heading from *before* this step's steering.
   // The kart then keeps travelling where it was going while its nose turns, so
@@ -309,23 +334,110 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
   kart.speed = Math.hypot(kart.vx, kart.vy);
 }
 
-// A bot looks a few samples ahead on the centre line and steers at that point.
-// It spends its nitro on straights and never drifts (keeps the AI simple).
+// Soft contact between karts. The friend's kart (isRemote) owns its position on
+// their browser, so here it only pushes us away; both local karts move equally.
+export function resolveContacts(karts) {
+  const P = Physics;
+  const reach = P.kartRadius * 2;
+  for (let i = 0; i < karts.length; i += 1) {
+    const a = karts[i];
+    if (a.isGhost) continue;
+    for (let j = i + 1; j < karts.length; j += 1) {
+      const b = karts[j];
+      if (b.isGhost) continue;
+      let dx = b.x - a.x;
+      let dy = b.y - a.y;
+      let dist = Math.hypot(dx, dy);
+      if (dist >= reach) continue;
+      if (dist < 0.001) {
+        // exactly on top of each other: pick a stable direction
+        dx = Math.cos(a.a + Math.PI / 2);
+        dy = Math.sin(a.a + Math.PI / 2);
+        dist = 0.001;
+      }
+      const nx = dx / dist;
+      const ny = dy / dist;
+      const overlap = reach - dist;
+      const aMove = a.isRemote ? 0 : 1;
+      const bMove = b.isRemote ? 0 : 1;
+      const movers = aMove + bMove;
+      if (movers === 0) continue;
+      if (aMove) {
+        a.x -= nx * overlap * (aMove / movers);
+        a.y -= ny * overlap * (aMove / movers);
+      }
+      if (bMove) {
+        b.x += nx * overlap * (bMove / movers);
+        b.y += ny * overlap * (bMove / movers);
+      }
+
+      // Only a closing pair gets an impulse; once they are separating the
+      // separation above is enough.
+      const closing = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+      if (closing <= 0) continue;
+      const share = (1 + P.bumpRestitution) / 2;
+      if (aMove) {
+        const push = aMove === 1 && bMove === 0 ? closing : closing * share;
+        a.vx -= nx * push;
+        a.vy -= ny * push;
+      }
+      if (bMove) {
+        const push = bMove === 1 && aMove === 0 ? closing : closing * share;
+        b.vx += nx * push;
+        b.vy += ny * push;
+      }
+      a.bump = Math.max(a.bump, closing);
+      if (bMove) b.bump = Math.max(b.bump, closing);
+      a.speed = Math.hypot(a.vx, a.vy);
+      if (bMove) b.speed = Math.hypot(b.vx, b.vy);
+    }
+  }
+}
+
+// Gentle rubber-banding for offline bots: a bot that is far behind gets a
+// little more top speed, one that is far ahead eases off. It never turns a slow
+// bot into a rocket, it only keeps a race from turning into a lonely drive.
+export function rubberBand(kart, leader, lapLength, strength = 1) {
+  if (!leader || !lapLength) return 1;
+  const gap = (leader.progress - kart.progress) / lapLength;
+  return 1 + clamp(gap * 0.4 * strength, -0.14, 0.14);
+}
+
+// A bot looks a few samples ahead on the centre line, brakes for tight corners,
+// drifts when the road bends and spends its nitro once the road straightens out.
 export function botInput(kart, track) {
   const { samples, N } = track;
-  const lookahead = 9 + Math.floor(kart.speed / 55);
+  const speed = kart.speed ?? 0;
+  const lookahead = 8 + Math.floor(speed / 52);
   const target = samples[(kart.lastIdx + lookahead) % N];
   const desired = Math.atan2(target.y - kart.y, target.x - kart.x);
   const diff = angleDiff(desired, kart.a);
   const sharp = Math.abs(diff);
+
+  // How much the road bends just ahead: the difference between the tangent now
+  // and the tangent further along the centre line.
+  const near = samples[(kart.lastIdx + 6) % N];
+  const far = samples[(kart.lastIdx + 34) % N];
+  const curve = Math.abs(angleDiff(Math.atan2(far.ty, far.tx), Math.atan2(near.ty, near.tx)));
+
   const wanted = Physics.maxSpeed * kart.skill * (1 - Math.min(0.5, sharp * 0.75));
   const boosting = kart.nitroOn;
+  const onRoad = (kart.dist ?? 0) <= track.halfWidth;
+  // Bots with a bit of skill slide through real corners, then let go so the
+  // drift reward pays out; they never start a drift when pointing at a wall.
+  const corner = curve > 0.3 && sharp < 0.9 && onRoad;
+  const keepDrift = kart.drifting && curve > 0.16;
+  const wantDrift = kart.skill >= 0.72 && speed > Physics.driftMinSpeed * 1.1;
+  const drift = !!wantDrift && (corner || keepDrift);
+
+  const straight = curve < 0.09 && sharp < 0.12;
+  const nitro = boosting ? kart.nitro > 0.02 && sharp < 0.2 : kart.nitro > 0.55 && straight;
   return {
     steer: clamp(diff * 2.4, -1, 1),
-    gas: kart.speed < wanted || boosting,
-    brake: !boosting && kart.speed > wanted * 1.25 && sharp > 0.45,
-    drift: false,
-    nitro: boosting ? kart.nitro > 0.02 && sharp < 0.2 : kart.nitro > 0.6 && sharp < 0.06,
+    gas: speed < wanted || boosting,
+    brake: !boosting && speed > wanted * 1.25 && sharp > 0.45,
+    drift,
+    nitro,
   };
 }
 

@@ -17,6 +17,8 @@ let autoDriftOn = false;
 const SteerPress = 7; // units per second toward full lock while a direction is held
 const SteerRelease = 12; // units per second back to centre after letting go
 const TiltFollow = 14; // how quickly the kart follows the tilt of the phone
+const PadFollow = 16; // same, for a gamepad stick
+const PadDead = 0.14; // ignore a stick that is only slightly off centre
 const AutoDriftOn = 0.72; // steering beyond this starts a drift (auto-drift)
 const AutoDriftOff = 0.55; // ... and it ends below this
 
@@ -159,6 +161,90 @@ export function setControls(next) {
   Object.assign(controls, next);
 }
 
+// ---------- gamepad ----------
+// Any connected pad using the standard mapping can drive. The four driving
+// actions can be remapped from the menu; Start stays as the pause button.
+
+export const DefaultPadBindings = { gas: 0, brake: 1, drift: 2, nitro: 3 };
+export const PadButtonNames = [
+  "A", "B", "X", "Y", "LB", "RB", "LT", "RT", "Back", "Start", "L3", "R3", "Up", "Down", "Left", "Right",
+];
+
+export function normalizePadBindings(bindings) {
+  const out = { ...DefaultPadBindings };
+  if (!bindings || typeof bindings !== "object") return out;
+  for (const action of Object.keys(DefaultPadBindings)) {
+    const index = bindings[action];
+    if (Number.isInteger(index) && index >= 0 && index < 32) out[action] = index;
+  }
+  return out;
+}
+
+let padBindings = { ...DefaultPadBindings };
+
+export function setPadBindings(next) {
+  padBindings = normalizePadBindings(next);
+}
+
+export function gamepadInput(pad, bindings = padBindings) {
+  if (!pad || pad.connected === false) return null;
+  const map = normalizePadBindings(bindings);
+  const pressed = (i) => pad.buttons?.[i]?.pressed === true;
+  const value = (i) => {
+    const v = pad.buttons?.[i]?.value;
+    return Number.isFinite(v) ? v : 0;
+  };
+  const active = (i) => pressed(i) || value(i) > 0.5;
+  const axis = Number.isFinite(pad.axes?.[0]) ? pad.axes[0] : 0;
+  const magnitude = Math.abs(axis) < PadDead ? 0 : (Math.abs(axis) - PadDead) / (1 - PadDead);
+  const bound = new Set(Object.values(map));
+  const spare = (button) => !bound.has(button);
+  return {
+    steer: Math.sign(axis) * Math.min(1, magnitude),
+    gas: active(map.gas) || (spare(7) && value(7) > 0.15),
+    brake: active(map.brake) || (spare(6) && value(6) > 0.15),
+    drift: active(map.drift) || (spare(5) && pressed(5)),
+    nitro: active(map.nitro) || (spare(4) && value(4) > 0.5),
+    pause: pressed(9),
+  };
+}
+
+export function activeGamepad() {
+  if (typeof navigator === "undefined" || typeof navigator.getGamepads !== "function") {
+    return null;
+  }
+  try {
+    for (const pad of navigator.getGamepads()) {
+      if (pad && pad.connected) return pad;
+    }
+  } catch {
+    // some browsers throw until the pad has been used once
+  }
+  return null;
+}
+
+export function gamepadAvailable() {
+  return !!activeGamepad();
+}
+
+export function gamepadDownButtons(pad) {
+  if (!pad) return [];
+  return (pad.buttons ?? [])
+    .map((button, index) => (button.pressed ? index : -1))
+    .filter((index) => index >= 0);
+}
+
+// True only on the step where Start was pressed, so holding it does not
+// toggle the pause menu forever.
+let padPauseLatch = false;
+export function gamepadPausePressed() {
+  const pad = activeGamepad();
+  const down = !!pad && gamepadInput(pad)?.pause;
+  const edge = down && !padPauseLatch;
+  padPauseLatch = down;
+  return edge;
+}
+
 // ---------- binding ----------
 
 export function bindInput(touchRoot, { onPause } = {}) {
@@ -239,7 +325,10 @@ export function usingTilt() {
 
 // dt is the fixed physics step, so steering feels the same at any frame rate.
 export function readInput(dt) {
-  if (usingTilt()) {
+  const pad = gamepadInput(activeGamepad());
+  if (pad && Math.abs(pad.steer) > 0.001) {
+    steerValue += (pad.steer - steerValue) * Math.min(1, PadFollow * dt);
+  } else if (usingTilt()) {
     let degrees = tilt.raw - tilt.neutral;
     if (tilt.flip) degrees = -degrees;
     const dead = 2; // ignore tiny wobbles around the centre
@@ -266,10 +355,15 @@ export function readInput(dt) {
 
   return {
     steer: steerValue,
-    brake: keys.has("ArrowDown") || keys.has("KeyS") || touch.brake,
-    gas: keys.has("ArrowUp") || keys.has("KeyW") || isTouchDevice,
+    brake: keys.has("ArrowDown") || keys.has("KeyS") || touch.brake || !!pad?.brake,
+    gas: keys.has("ArrowUp") || keys.has("KeyW") || isTouchDevice || !!pad?.gas,
     drift:
-      keys.has("ShiftLeft") || keys.has("ShiftRight") || keys.has("KeyZ") || touch.drift || autoDriftOn,
-    nitro: keys.has("Space") || keys.has("KeyX") || touch.nitro,
+      keys.has("ShiftLeft") ||
+      keys.has("ShiftRight") ||
+      keys.has("KeyZ") ||
+      touch.drift ||
+      autoDriftOn ||
+      !!pad?.drift,
+    nitro: keys.has("Space") || keys.has("KeyX") || touch.nitro || !!pad?.nitro,
   };
 }
