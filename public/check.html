@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Connection check</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #eef1f7;
+        --card: #ffffff;
+        --border: #d8deea;
+        --text: #1c2233;
+        --soft: #667088;
+        --ok: #1a9c5b;
+        --bad: #d93a3f;
+        --wait: #b7791f;
+        --blue: #4f6bff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #141824;
+          --card: #1d2233;
+          --border: #323a55;
+          --text: #eef1fa;
+          --soft: #98a2bd;
+          --ok: #3ddc97;
+          --bad: #ff7378;
+          --wait: #f0b84a;
+          --blue: #6f86ff;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif;
+      }
+      main { max-width: 520px; margin: 0 auto; }
+      h1 { margin: 8px 0 4px; font-size: 24px; }
+      p { margin: 0 0 12px; color: var(--soft); }
+      .card {
+        padding: 14px;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: var(--card);
+      }
+      ol { margin: 0; padding: 0; list-style: none; }
+      li {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      li:last-child { border-bottom: 0; }
+      .mark { width: 1.4em; font-weight: 700; text-align: center; }
+      .ok .mark { color: var(--ok); }
+      .bad .mark { color: var(--bad); }
+      .wait .mark { color: var(--wait); }
+      .name { flex: 1; }
+      .name small { display: block; color: var(--soft); }
+      .time { color: var(--soft); font-variant-numeric: tabular-nums; }
+      .actions { display: flex; gap: 8px; margin: 14px 0; }
+      button {
+        flex: 1;
+        padding: 12px;
+        border: 0;
+        border-radius: 12px;
+        background: var(--blue);
+        color: #fff;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.secondary {
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--text);
+      }
+      button:disabled { opacity: 0.6; cursor: default; }
+      #verdict {
+        margin: 14px 0 0;
+        padding: 12px;
+        border-radius: 12px;
+        font-weight: 600;
+      }
+      #verdict.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+      #verdict.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); }
+      pre {
+        margin: 10px 0 0;
+        padding: 10px;
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--card);
+        color: var(--soft);
+        font-size: 12px;
+        white-space: pre-wrap;
+      }
+      a { color: var(--blue); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Connection check</h1>
+      <p>
+        Open this page on each phone, on its own network, and tap the button.
+        <br />
+        افتح الصفحة دي على كل موبايل (على شبكته) واضغط الزرار.
+      </p>
+
+      <div class="card">
+        <ol id="steps"></ol>
+      </div>
+      <div id="verdict" hidden></div>
+
+      <div class="actions">
+        <button id="run" type="button">Run test / ابدأ الاختبار</button>
+        <button id="copy" type="button" class="secondary" hidden>Copy report</button>
+      </div>
+      <pre id="report" hidden></pre>
+      <p><a href="./">&larr; Back to the game</a></p>
+    </main>
+
+    <script>
+      const RELAY = "wss://ourfirstgame.doha-mustafa.workers.dev";
+      const HTTP = "https://ourfirstgame.doha-mustafa.workers.dev";
+      const stepsEl = document.getElementById("steps");
+      const verdictEl = document.getElementById("verdict");
+      const reportEl = document.getElementById("report");
+      const runBtn = document.getElementById("run");
+      const copyBtn = document.getElementById("copy");
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      let lines = [];
+
+      function addStep(title, hint) {
+        const li = document.createElement("li");
+        li.className = "wait";
+        li.innerHTML =
+          '<span class="mark">&hellip;</span><span class="name"></span><span class="time"></span>';
+        li.querySelector(".name").textContent = title;
+        if (hint) {
+          const small = document.createElement("small");
+          small.textContent = hint;
+          li.querySelector(".name").append(small);
+        }
+        stepsEl.append(li);
+        return {
+          done(ms, note) {
+            li.className = "ok";
+            li.querySelector(".mark").textContent = "✓";
+            li.querySelector(".time").textContent = ms == null ? "" : ms + " ms";
+            lines.push("OK   " + title + (ms == null ? "" : " " + ms + "ms") + (note ? " " + note : ""));
+          },
+          fail(note) {
+            li.className = "bad";
+            li.querySelector(".mark").textContent = "✗";
+            const small = document.createElement("small");
+            small.textContent = note;
+            li.querySelector(".name").append(small);
+            lines.push("FAIL " + title + " " + note);
+          },
+        };
+      }
+
+      function timeout(promise, ms, what) {
+        return Promise.race([
+          promise,
+          new Promise((_, rej) => setTimeout(() => rej(new Error(what + " timed out after " + ms / 1000 + "s")), ms)),
+        ]);
+      }
+
+      function openSocket(room, role) {
+        return new Promise((resolve, reject) => {
+          let ws;
+          try {
+            ws = new WebSocket(RELAY + "/room/" + room + "?role=" + role + "&key=chk" + Math.random().toString(36).slice(2, 8));
+          } catch (e) {
+            reject(new Error("browser refused to open a WebSocket"));
+            return;
+          }
+          ws.inbox = [];
+          ws.waiters = [];
+          ws.onmessage = (e) => {
+            const text = String(e.data);
+            const w = ws.waiters.findIndex((f) => f.match(text));
+            if (w >= 0) ws.waiters.splice(w, 1)[0].resolve(text);
+            else ws.inbox.push(text);
+          };
+          ws.onopen = () => resolve(ws);
+          ws.onerror = () => reject(new Error("could not connect (blocked or no internet?)"));
+          ws.onclose = (e) => reject(new Error("closed with code " + e.code));
+          ws.expect = (match) =>
+            new Promise((res) => {
+              const i = ws.inbox.findIndex(match);
+              if (i >= 0) res(ws.inbox.splice(i, 1)[0]);
+              else ws.waiters.push({ match, resolve: res });
+            });
+        });
+      }
+
+      async function run() {
+        runBtn.disabled = true;
+        copyBtn.hidden = true;
+        verdictEl.hidden = true;
+        stepsEl.replaceChildren();
+        lines = [];
+        const c = navigator.connection;
+        lines.push("time: " + new Date().toISOString());
+        lines.push("ua: " + navigator.userAgent);
+        lines.push("online: " + navigator.onLine + (c ? " type=" + (c.type || "?") + " eff=" + (c.effectiveType || "?") : ""));
+        let failed = false;
+        const sockets = [];
+        const room = String(Math.floor(Math.random() * 9000) + 1000);
+
+        try {
+          // 1. plain HTTPS to the relay
+          let s = addStep("Reach the game server", "HTTPS to the relay");
+          let t = performance.now();
+          try {
+            const res = await timeout(fetch(HTTP + "/health", { cache: "no-store" }), 8000, "request");
+            if (!res.ok) throw new Error("server answered " + res.status);
+            s.done(Math.round(performance.now() - t));
+          } catch (e) {
+            s.fail(e.message + " — this network may block workers.dev");
+            throw e;
+          }
+
+          // 2. host socket
+          s = addStep("Open a WebSocket (host)", "this is what the game uses");
+          t = performance.now();
+          const host = await timeout(openSocket(room, "host"), 8000, "WebSocket").catch((e) => {
+            s.fail(e.message);
+            throw e;
+          });
+          sockets.push(host);
+          await timeout(host.expect((m) => m === "R"), 5000, "room registration");
+          s.done(Math.round(performance.now() - t));
+
+          // 3. guest joins
+          s = addStep("Second player joins the room");
+          t = performance.now();
+          const guest = await timeout(openSocket(room, "guest"), 8000, "WebSocket").catch((e) => {
+            s.fail(e.message);
+            throw e;
+          });
+          sockets.push(guest);
+          await timeout(Promise.all([guest.expect((m) => m === "A"), host.expect((m) => m === "J")]), 5000, "join");
+          s.done(Math.round(performance.now() - t));
+
+          // 4. messages both ways
+          s = addStep("Moves travel both ways", "5 round trips");
+          const rtts = [];
+          for (let i = 0; i < 5; i++) {
+            t = performance.now();
+            host.send(JSON.stringify({ type: "move", edge: i, n: i }));
+            await timeout(guest.expect((m) => m.includes('"move"')), 5000, "message to guest");
+            guest.send(JSON.stringify({ type: "ack", n: i }));
+            await timeout(host.expect((m) => m.includes('"ack"')), 5000, "reply to host");
+            rtts.push(Math.round(performance.now() - t));
+          }
+          s.done(Math.round(rtts.reduce((a, b) => a + b, 0) / rtts.length), "avg of " + rtts.join(","));
+
+          // 5. stability: stay connected 20s with a ping every 2s
+          s = addStep("Stays connected for 20 seconds", "checks that the link does not drop");
+          let lost = 0;
+          for (let i = 0; i < 10; i++) {
+            if (host.readyState !== 1 || guest.readyState !== 1) { lost = -1; break; }
+            host.send(JSON.stringify({ type: "ping", i }));
+            try {
+              await timeout(guest.expect((m) => m.includes('"ping"')), 3000, "ping");
+            } catch {
+              lost++;
+            }
+            await sleep(2000);
+          }
+          if (lost === 0) s.done(null);
+          else s.fail(lost < 0 ? "the connection dropped" : lost + " of 10 pings were lost");
+          if (lost !== 0) throw new Error("unstable");
+        } catch (e) {
+          failed = true;
+          lines.push("error: " + e.message);
+        } finally {
+          sockets.forEach((w) => { try { w.onclose = null; w.close(1000); } catch {} });
+        }
+
+        verdictEl.hidden = false;
+        verdictEl.className = failed ? "bad" : "ok";
+        verdictEl.textContent = failed
+          ? "Problem found on this network — send the report to Claude. / فيه مشكلة على الشبكة دي، ابعت التقرير."
+          : "All good on this network. / الشبكة دي سليمة.";
+        reportEl.hidden = false;
+        reportEl.textContent = lines.join("\n");
+        copyBtn.hidden = false;
+        runBtn.disabled = false;
+      }
+
+      runBtn.addEventListener("click", run);
+      copyBtn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(reportEl.textContent);
+          copyBtn.textContent = "Copied!";
+        } catch {
+          const r = document.createRange();
+          r.selectNodeContents(reportEl);
+          getSelection().removeAllRanges();
+          getSelection().addRange(r);
+        }
+      });
+    </script>
+  </body>
+</html>
