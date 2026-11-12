@@ -31,8 +31,12 @@ import { audio } from "./audio.js";
 import { createOnlineSession, createRoomId } from "./online.js";
 
 const LapOptions = [1, 3, 5];
-// degrees of phone tilt for full steering lock
-const TiltRanges = { low: 32, normal: 24, high: 17 };
+// Tilt sensitivity is a number from 1 (calm) to 10 (twitchy). It sets how many
+// degrees of tilt give full steering lock: 6 is about 24 degrees.
+const SensMin = 1;
+const SensMax = 10;
+const SensDefault = 6;
+const tiltRangeFor = (sens) => 44 - 3.4 * sens;
 const CountdownSeconds = 3.2;
 const SendEverySeconds = 0.05;
 
@@ -40,6 +44,15 @@ const SendEverySeconds = 0.05;
 
 const params = new URLSearchParams(window.location.search);
 const RoomPattern = /^\d{4}$/;
+
+// Older versions stored low / normal / high.
+function readSens(saved) {
+  const n = Number(saved.tiltSens);
+  if (Number.isFinite(n) && n >= SensMin && n <= SensMax) {
+    return Math.round(n);
+  }
+  return { low: 3, normal: 6, high: 9 }[saved.sensitivity] ?? SensDefault;
+}
 
 function readPrefs() {
   let saved = {};
@@ -56,7 +69,8 @@ function readPrefs() {
     tipSeen: saved.tipSeen === true,
     // phone controls
     steer: saved.steer === "buttons" ? "buttons" : "tilt",
-    sensitivity: ["low", "normal", "high"].includes(saved.sensitivity) ? saved.sensitivity : "normal",
+    tiltSens: readSens(saved),
+    screenMode: saved.screenMode === "landscape" ? "landscape" : "auto",
     flip: saved.flip === true,
     autoDrift: saved.autoDrift !== false,
   };
@@ -113,6 +127,13 @@ root.innerHTML = `
     </div>
   </div>
   <div id="screen"></div>
+  <div id="rotate" hidden>
+    <div class="rotate-card">
+      <div class="rotate-phone" aria-hidden="true"></div>
+      <p>Turn your phone sideways</p>
+      <button type="button" id="rotate-skip">Play upright anyway</button>
+    </div>
+  </div>
 `;
 const $ = (id) => document.getElementById(id);
 const canvas = $("game");
@@ -136,12 +157,56 @@ const muteButton = $("mute-btn");
 const tiltGauge = $("tilt-gauge");
 const tiltPrompt = $("tilt-prompt");
 const driftButton = $("drift-btn");
+const rotateEl = $("rotate");
+const portraitQuery = window.matchMedia("(orientation: portrait)");
+
+// "Landscape" mode: go fullscreen and lock the screen sideways where the browser
+// allows it (Android). iPhones can't lock, so a "turn your phone" card is shown.
+async function enterLandscape() {
+  if (!isTouchDevice || prefs.screenMode !== "landscape") {
+    return;
+  }
+  try {
+    if (!document.fullscreenElement) {
+      await document.documentElement.requestFullscreen?.({ navigationUI: "hide" });
+    }
+  } catch {
+    // not allowed here: the rotate card still works
+  }
+  try {
+    await screen.orientation?.lock?.("landscape");
+  } catch {
+    // locking is not supported on this browser
+  }
+}
+
+// Any tap during a race re-tries (the first tap may have been needed for permission).
+window.addEventListener("pointerup", () => {
+  if (world && ["countdown", "racing"].includes(world.state)) {
+    enterLandscape();
+  }
+});
+
+// True while the "turn your phone" card is covering a solo race.
+function needsRotation() {
+  return (
+    isTouchDevice &&
+    prefs.screenMode === "landscape" &&
+    portraitQuery.matches &&
+    !!world &&
+    ["countdown", "racing"].includes(world.state)
+  );
+}
+$("rotate-skip").addEventListener("click", () => {
+  prefs.screenMode = "auto";
+  savePrefs();
+});
 bindInput(touchEl, { onPause: () => togglePause() });
 
 // Apply the phone control settings (steering mode, sensitivity, auto-drift).
 function applyControls() {
   setControls({ steer: prefs.steer, autoDrift: prefs.autoDrift });
-  setTiltOptions({ range: TiltRanges[prefs.sensitivity], flip: prefs.flip });
+  setTiltOptions({ range: tiltRangeFor(prefs.tiltSens), flip: prefs.flip });
   driftButton.hidden = prefs.autoDrift;
   document.body.dataset.steer = prefs.steer === "tilt" ? "tilt" : "buttons";
 }
@@ -618,6 +683,29 @@ function showScreen(element) {
   screen.replaceChildren(element);
 }
 
+// A labelled range slider. onInput runs while dragging, onChange when released.
+function slider({ min, max, value, label, onInput, onChange }) {
+  const row = document.createElement("div");
+  row.className = "slider";
+  const input = document.createElement("input");
+  input.type = "range";
+  input.min = String(min);
+  input.max = String(max);
+  input.step = "1";
+  input.value = String(value);
+  input.setAttribute("aria-label", label);
+  const out = document.createElement("output");
+  out.textContent = `${value}/${max}`;
+  input.addEventListener("input", () => {
+    const next = Number(input.value);
+    out.textContent = `${next}/${max}`;
+    onInput(next);
+  });
+  input.addEventListener("change", () => onChange?.(Number(input.value)));
+  row.append(input, out);
+  return row;
+}
+
 function choice(options, selected, onPick, label) {
   const row = document.createElement("div");
   row.className = "choices";
@@ -659,9 +747,10 @@ function showMenu() {
         ? `<details class="settings">
         <summary>Controls</summary>
         <div class="group"><span class="label">Steering</span><div data-slot="steer"></div></div>
-        <div class="group" data-tilt-only><span class="label">Tilt sensitivity</span><div data-slot="sens"></div></div>
+        <div class="group" data-tilt-only><span class="label">Tilt sensitivity <small>(higher = turns with less tilt)</small></span><div data-slot="sens"></div></div>
         <div class="group" data-tilt-only><span class="label">Tilt direction</span><div data-slot="flip"></div></div>
         <div class="group"><span class="label">Drift</span><div data-slot="drift"></div></div>
+        <div class="group"><span class="label">Screen</span><div data-slot="screen"></div></div>
       </details>`
         : ""
     }
@@ -718,12 +807,17 @@ function showMenu() {
         ),
       );
       element.querySelector('[data-slot="sens"]').replaceChildren(
-        choice(
-          [{ value: "low", text: "Low" }, { value: "normal", text: "Normal" }, { value: "high", text: "High" }],
-          prefs.sensitivity,
-          (value) => set("sensitivity", value),
-          "Tilt sensitivity",
-        ),
+        slider({
+          min: SensMin,
+          max: SensMax,
+          value: prefs.tiltSens,
+          label: "Tilt sensitivity",
+          onInput: (value) => {
+            prefs.tiltSens = value;
+            applyControls();
+          },
+          onChange: savePrefs,
+        }),
       );
       element.querySelector('[data-slot="flip"]').replaceChildren(
         choice(
@@ -741,6 +835,17 @@ function showMenu() {
           "Drift",
         ),
       );
+      element.querySelector('[data-slot="screen"]').replaceChildren(
+        choice(
+          [{ value: "auto", text: "Any" }, { value: "landscape", text: "Landscape" }],
+          prefs.screenMode,
+          (value) => {
+            set("screenMode", value);
+            enterLandscape();
+          },
+          "Screen",
+        ),
+      );
       element.querySelectorAll("[data-tilt-only]").forEach((row) => {
         row.hidden = prefs.steer !== "tilt";
       });
@@ -749,6 +854,7 @@ function showMenu() {
   }
   element.querySelector('[data-act="solo"]').addEventListener("click", () => {
     if (isTouchDevice && prefs.steer === "tilt") enableTilt();
+    enterLandscape();
     startSolo();
   });
   element.querySelector('[data-act="online"]').addEventListener("click", () => {
@@ -856,6 +962,7 @@ function showLobby() {
   }
   startButton.addEventListener("click", () => {
     if (isTouchDevice && prefs.steer === "tilt") enableTilt();
+    enterLandscape();
     hostStartsRace();
   });
 
@@ -910,6 +1017,28 @@ function showPause() {
     <a class="big" data-role="menu"><strong>${solo ? "Quit to menu" : "Leave race"}</strong></a>
   `);
   panel.querySelector('[data-role="menu"]').href = window.location.pathname;
+  if (isTouchDevice && prefs.steer === "tilt") {
+    const group = document.createElement("div");
+    group.className = "group";
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = "Tilt sensitivity";
+    group.append(
+      label,
+      slider({
+        min: SensMin,
+        max: SensMax,
+        value: prefs.tiltSens,
+        label: "Tilt sensitivity",
+        onInput: (value) => {
+          prefs.tiltSens = value;
+          applyControls();
+        },
+        onChange: savePrefs,
+      }),
+    );
+    panel.querySelector('[data-act="resume"]').before(group);
+  }
   panel.querySelector('[data-act="resume"]').addEventListener("click", () => togglePause());
   panel.querySelector('[data-act="recenter"]')?.addEventListener("click", () => {
     recenterTilt();
@@ -1126,7 +1255,9 @@ function frame(now) {
   last = now;
 
   // The physics always advances in equal slices, whatever the screen's frame rate.
-  if (!paused) {
+  const rotate = needsRotation();
+  rotateEl.hidden = !rotate;
+  if (!paused && !(rotate && !online)) {
     accumulator += frameDt;
     let steps = 0;
     while (accumulator >= FixedStep && steps < 6) {
