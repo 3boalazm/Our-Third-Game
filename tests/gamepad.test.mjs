@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { gamepadInput } from "../src/input.js";
+import { gamepadInput, normalizePadBindings, setPadBindings } from "../src/input.js";
 
 function pad({ axis = 0, pressed = [], value = {} } = {}) {
   return {
@@ -30,6 +30,24 @@ test("buttons and triggers map to the driving controls", () => {
   assert.equal(gamepadInput(pad({ pressed: [5] })).drift, true);
   assert.equal(gamepadInput(pad({ pressed: [3] })).nitro, true);
   assert.equal(gamepadInput(pad({ pressed: [9] })).pause, true);
+});
+
+test("the four driving buttons can be remapped", () => {
+  const custom = { gas: 3, brake: 1, drift: 0, nitro: 2 };
+  const state = gamepadInput(pad({ pressed: [3] }), custom);
+  assert.equal(state.gas, true);
+  assert.equal(state.nitro, false);
+  assert.equal(gamepadInput(pad({ pressed: [0] }), custom).drift, true);
+  assert.equal(gamepadInput(pad({ pressed: [2] }), custom).nitro, true);
+  assert.deepEqual(normalizePadBindings({ gas: 7, brake: -1, drift: "x" }), {
+    gas: 7,
+    brake: 1,
+    drift: 2,
+    nitro: 3,
+  });
+  setPadBindings(custom);
+  assert.equal(gamepadInput(pad({ pressed: [3] })).gas, true);
+  setPadBindings(null);
 });
 
 test("a disconnected pad is ignored", () => {

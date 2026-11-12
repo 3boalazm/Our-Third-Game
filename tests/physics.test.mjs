@@ -9,6 +9,7 @@ import {
   makeKart,
   placeOnGrid,
   resolveContacts,
+  rubberBand,
   slipstream,
   stepKart,
 } from "../src/game.js";
@@ -188,6 +189,19 @@ test("a boost pad fires once, then waits for its cooldown", () => {
   assert.equal(kart.padHit, 0, "the same pad must not fire again during the cooldown");
 });
 
+test("rubber-banding helps a bot that is behind and eases one that is ahead", () => {
+  const bot = newKart(track);
+  const leader = newKart(track);
+  bot.progress = 100;
+  leader.progress = 100 + track.N * 0.5;
+  const behind = rubberBand(bot, leader, track.N);
+  assert.ok(behind > 1 && behind <= 1.15, `behind factor ${behind}`);
+  bot.progress = leader.progress + track.N * 0.5;
+  const ahead = rubberBand(bot, leader, track.N);
+  assert.ok(ahead < 1 && ahead >= 0.86, `ahead factor ${ahead}`);
+  assert.equal(rubberBand(bot, null, track.N), 1);
+});
+
 test("karts bump instead of passing through each other", () => {
   const a = newKart(track);
   const b = newKart(track);
@@ -230,4 +244,46 @@ test("race progress counts samples forward around the lap", () => {
   const start = kart.progress;
   for (let i = 0; i < 180; i += 1) stepKart(kart, pilot(kart, track), FixedStep, track, true);
   assert.ok(kart.progress > start + 20, `progress only ${kart.progress - start}`);
+});
+
+test("rain and night change grip without breaking normal driving", async () => {
+  const { applyWeather } = await import("../src/weather.js");
+  const k = newKart(track);
+  applyWeather([k], "rain");
+  assert.ok(k.grip < 1 && k.topScale < 1 && k.steerScale < 1);
+  applyWeather([k], "night");
+  assert.ok(k.grip < 1 && k.grip > 0.8);
+  applyWeather([k], "clear");
+  assert.equal(k.grip, 1);
+  assert.equal(k.topScale, 1);
+});
+
+test("rain costs a little top speed, and clear weather does not", async () => {
+  const { applyWeather } = await import("../src/weather.js");
+  const straight = {
+    N: 240,
+    halfWidth: 100000,
+    pads: [],
+    samples: Array.from({ length: 240 }, (_, i) => ({
+      x: i * 100,
+      y: 0,
+      tx: 1,
+      ty: 0,
+    })),
+  };
+  const run = (weather) => {
+    const k = newKart(track);
+    applyWeather([k], weather);
+    k.x = 100;
+    k.y = 0;
+    k.a = 0;
+    k.lastIdx = 1;
+    for (let i = 0; i < 180; i += 1) {
+      stepKart(k, { steer: 0, gas: true, brake: false, drift: false, nitro: false }, 1 / 60, straight, true);
+    }
+    return k.speed;
+  };
+  const clear = run("clear");
+  const rain = run("rain");
+  assert.ok(rain < clear - 1, `rain ${rain} should be slower than clear ${clear}`);
 });

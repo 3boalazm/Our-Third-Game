@@ -10,7 +10,11 @@ A small top-down kart racing game for the browser. Race three bots on your own, 
 - **Medals:** every track has bronze, silver and gold lap-time targets scaled to its length. The best-lap line in the menu shows your medal and the next target
 - **Kart colour:** pick one of six colours in the menu; the bots are assigned different ones. The choice is remembered
 - **Lap times and records:** the HUD shows the current lap and your best lap, and the menu remembers the best lap on each track. Beat it and the race calls out a new track record; the results list every kart's best lap
-- **Gamepad:** any standard-mapping controller can drive: left stick steers, RT/A accelerates, LT/B brakes, X or RB drifts, Y or LB fires nitro, Start pauses
+- **Weather:** pick Clear, Rain or Night. Rain adds streaks and a wet tint, costs a little top speed and, more importantly, **grip**: the kart slides more and steering is softer. Night darkens the track and turns on the headlights. Weather is saved with the rest of the menu choices (online races stay clear so both players get the same physics)
+- **Daily challenge:** one deterministic challenge per day, shown on the start menu: a bronze, silver or gold lap at one of the tracks. The card starts a one-lap time trial on that track, and turning in the required lap marks the day done
+- **Photo mode and replay:** pause a solo race to freeze the action. Photo mode hides the HUD, centres the kart and lets you drag or use the arrow keys to orbit, zoom with the wheel, save a PNG (S) and leave with Esc. Replay plays the last ~10 seconds from a slowly orbiting cinematic camera, with a progress bar and its own exit button
+- **Gamepad:** any standard-mapping controller can drive: left stick steers, RT/A accelerates, LT/B brakes, X or RB drifts, Y or LB fires nitro, Start pauses. Open **Gamepad** in the menu to remap Gas, Brake, Drift and Nitro: click a row, then press the button you want
+- **Smarter bots:** rivals drift through real corners, use the nitro they earn and spend it on straights. Gentle rubber-banding gives a bot that is far behind a little more top speed and eases one that is far ahead, so a race stays a race
 - **Camera:** by default the camera sits behind the kart, so the road ahead always runs up the screen (also in landscape). "Fixed map" (Controls or the Pause menu, or the C key) keeps the map still instead
 - Keyboard: arrows or WASD drive, Down/S brake, **Shift** drift, **Space** nitro, P or Esc pause
 - Phone: the kart accelerates by itself and you **tilt the phone like a steering wheel**. Only two buttons are used: **Nitro** (right thumb) and **Brake** (left thumb). Drift is automatic when you turn hard. In Controls (start menu) you can switch to on-screen arrows, set the **tilt sensitivity** (1-10 slider, also in the Pause menu), flip the tilt direction, bring back a Drift button, or choose **Landscape** (fullscreen + screen lock where the browser allows it; on iPhone a "turn your phone" card is shown). iPhones ask for motion access once; Pause has a "Recenter tilt" button
@@ -33,7 +37,7 @@ npm install
 npm run dev
 ```
 
-Build for production with `npm run build` (output in `dist`). `npm test` checks that every track is a clean loop that does not run into itself, that boost pads and scenery are off the road and out of each other's way, and runs the physics tests (acceleration, frame-rate independence, wall, nitro, drift rewards, boost pads, slipstream, kart contact, lap progress), the ghost playback/recording maths, the gamepad mapping, and the tilt-angle maths for every screen orientation with Node's built-in test runner.
+Build for production with `npm run build` (output in `dist`). `npm test` checks that every track is a clean loop that does not run into itself, that boost pads and scenery are off the road and out of each other's way, and runs the physics tests (acceleration, frame-rate independence, wall, nitro, drift rewards, boost pads, slipstream, kart contact, lap progress), the ghost playback/recording maths, the daily-challenge selection, the gamepad mapping and remapping, the weather grip multipliers, rubber-banding, and the tilt-angle maths for every screen orientation with Node's built-in test runner.
 
 ## How online play works
 
@@ -47,11 +51,13 @@ Both players connect to a small room relay (a Cloudflare Worker, the same one us
 - `src/game.js` kart physics (fixed 1/60 s step), drift, nitro, bot driver, lap progress
 - `src/particles.js` smoke, flames, grass and sparks (fixed-size pool)
 - `src/audio.js` engine, drift, nitro and crash sounds made with Web Audio
-- `tests/` physics tests
+- `tests/` physics, ghost, weather, gamepad and daily-challenge tests
 - `src/render.js` canvas drawing, the baked grass/scenery layer, skid marks and minimap
 - `src/scenery.js` seeded trees, bushes, rocks, tyre stacks, grandstand and start-line flags
 - `src/ghost.js` saves, samples and replays the best-lap ghost
-- `src/input.js` keyboard, touch buttons and tilt (gyroscope) steering
+- `src/weather.js` Clear / Rain / Night presets and the grip multipliers they apply
+- `src/challenges.js` deterministic daily challenge and its per-day storage
+- `src/input.js` keyboard, touch buttons, tilt (gyroscope) steering and gamepad mapping
 - `src/layout.js` rotates the game sideways for the Landscape option
 - `public/sw.js`, `public/manifest.webmanifest`, `public/icons/` the installable app; `python scripts/make-icons.py` regenerates the icons
 - `src/online.js` relay client with automatic reconnect

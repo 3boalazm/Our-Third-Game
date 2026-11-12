@@ -11,16 +11,25 @@ import {
   makeKart,
   placeOnGrid,
   resolveContacts,
+  rubberBand,
   stepKart,
 } from "./game.js";
 import { loadGhost, recordGhostFrame, sampleGhost, saveGhost } from "./ghost.js";
+import { WeatherOptions, applyWeather } from "./weather.js";
+import { challengeForDate, isChallengeDone, markChallengeDone } from "./challenges.js";
 import { createRenderer } from "./render.js";
 import {
+  DefaultPadBindings,
+  PadButtonNames,
+  activeGamepad,
   bindInput,
   enableTilt,
   gamepadAvailable,
+  gamepadDownButtons,
   gamepadPausePressed,
   isTouchDevice,
+  normalizePadBindings,
+  setPadBindings,
   readInput,
   recenterTilt,
   resetInput,
@@ -38,11 +47,11 @@ import { createOnlineSession, createRoomId } from "./online.js";
 
 const LapOptions = [1, 3, 5];
 const DifficultyOptions = ["easy", "normal", "hard"];
-// Bot skill multiplies their top speed. "Normal" is the original line-up.
+// Bot skill multiplies their top speed; the AI also drifts and uses nitro.
 const BotSkills = {
-  easy: [0.70, 0.76, 0.81],
-  normal: [0.84, 0.90, 0.96],
-  hard: [0.93, 0.99, 1.04],
+  easy: [0.66, 0.71, 0.76],
+  normal: [0.79, 0.84, 0.89],
+  hard: [0.90, 0.96, 1.02],
 };
 // Tilt sensitivity is a number from 1 (calm) to 10 (twitchy). It sets how many
 // degrees of tilt give full steering lock: 6 is about 24 degrees.
@@ -102,6 +111,8 @@ function readPrefs() {
     difficulty: DifficultyOptions.includes(saved.difficulty) ? saved.difficulty : "normal",
     records: readRecords(saved.records),
     color: KartColors.includes(saved.color) ? saved.color : KartColors[0],
+    weather: WeatherOptions.some((w) => w.id === saved.weather) ? saved.weather : "clear",
+    padBindings: normalizePadBindings(saved.padBindings),
   };
 }
 const prefs = readPrefs();
@@ -161,7 +172,7 @@ root.innerHTML = `
   <canvas id="game"></canvas>
   <div id="hud" hidden>
     <div class="hud-left">
-      <div class="hud-box"><span id="lap"></span><span id="pos"></span></div>
+      <div class="hud-box"><span id="lap"></span><span id="pos"></span><span id="weather" hidden></span></div>
       <div class="hud-buttons">
         <button type="button" id="pause-btn" aria-label="Pause">&#10074;&#10074;</button>
         <button type="button" id="mute-btn" aria-label="Sound on or off"></button>
@@ -184,6 +195,20 @@ root.innerHTML = `
   <div id="wrongway" hidden>Wrong way!</div>
   <div id="toast" hidden></div>
   <div id="tip" hidden></div>
+  <div id="replay" class="replay-ui" hidden>
+    <div class="replay-bar">
+      <span class="replay-label">Replay</span>
+      <span class="replay-track"><i></i></span>
+      <button type="button" data-act="replay-exit">Exit</button>
+    </div>
+  </div>
+  <div id="photo" class="photo-ui" hidden>
+    <div class="photo-bar">
+      <span class="photo-hint">Photo mode · drag or arrows to orbit · wheel to zoom · S saves · Esc exits</span>
+      <button type="button" data-act="photo-save">Save photo</button>
+      <button type="button" data-act="photo-exit">Exit</button>
+    </div>
+  </div>
   <button type="button" id="tilt-prompt" hidden>Tap to turn on tilt steering</button>
   <div id="touch" hidden>
     <div id="tilt-gauge" hidden><i></i></div>
@@ -202,10 +227,13 @@ root.innerHTML = `
 const $ = (id) => document.getElementById(id);
 const canvas = $("game");
 const renderer = createRenderer(canvas);
+const photoEl = $("photo");
+const replayEl = $("replay");
 const hud = {
   root: $("hud"),
   lap: $("lap"),
   pos: $("pos"),
+  weather: $("weather"),
   time: $("time"),
   laptime: $("laptime"),
   best: $("best"),
@@ -282,6 +310,46 @@ document.addEventListener("fullscreenchange", () => {
   }
 });
 window.addEventListener("keydown", (event) => {
+  if (replay) {
+    if (event.code === "Escape" || event.code === "KeyR" || event.code === "KeyP") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      exitReplay();
+    }
+    return;
+  }
+  if (photo) {
+    if (event.repeat) return;
+    if (event.code === "Escape" || event.code === "KeyV" || event.code === "KeyP") {
+      event.preventDefault();
+      exitPhotoMode();
+    } else if (event.code === "KeyS") {
+      event.preventDefault();
+      savePhoto();
+    } else if (event.code === "ArrowLeft" || event.code === "KeyA") {
+      event.preventDefault();
+      photo.orbit -= 0.12;
+    } else if (event.code === "ArrowRight" || event.code === "KeyD") {
+      event.preventDefault();
+      photo.orbit += 0.12;
+    } else if (event.code === "ArrowUp" || event.code === "KeyW" || event.code === "Equal") {
+      event.preventDefault();
+      photo.zoom = Math.min(2.4, photo.zoom + 0.08);
+    } else if (event.code === "ArrowDown" || event.code === "KeyQ" || event.code === "Minus") {
+      event.preventDefault();
+      photo.zoom = Math.max(0.65, photo.zoom - 0.08);
+    }
+    event.stopImmediatePropagation();
+    return;
+  }
+  if (event.code === "KeyV" && !event.repeat && !paused) {
+    enterPhotoMode();
+    return;
+  }
+  if (event.code === "KeyR" && !event.repeat && !paused && replayBuffer.length >= 20) {
+    enterReplay();
+    return;
+  }
   if (event.code === "KeyF" && !event.repeat && document.fullscreenEnabled) {
     toggleFullscreen();
   }
@@ -294,11 +362,16 @@ window.addEventListener("keydown", (event) => {
 
 // A tap during a race re-tries fullscreen (the first tap may have been used for permissions).
 window.addEventListener("pointerup", () => {
-  if (world && ["countdown", "racing"].includes(world.state)) {
+  if (!photo && !replay && world && ["countdown", "racing"].includes(world.state)) {
     startImmersive();
   }
 });
-bindInput(touchEl, { onPause: () => togglePause() });
+bindInput(touchEl, {
+  onPause: () => {
+    if (photo) exitPhotoMode();
+    else togglePause();
+  },
+});
 
 // Apply the phone control settings (steering mode, sensitivity, auto-drift).
 function applyControls() {
@@ -306,6 +379,7 @@ function applyControls() {
   setTiltOptions({ range: tiltRangeFor(prefs.tiltSens), flip: prefs.flip });
   driftButton.hidden = prefs.autoDrift;
   setForceLandscape(prefs.screenMode === "landscape");
+  setPadBindings(prefs.padBindings);
   renderer.setCameraMode(prefs.camera);
   document.body.dataset.steer = prefs.steer === "tilt" ? "tilt" : "buttons";
 }
@@ -343,6 +417,37 @@ muteButton.addEventListener("click", () => {
   renderMute();
 });
 pauseButton.addEventListener("click", () => togglePause());
+photoEl.querySelector('[data-act="photo-exit"]').addEventListener("click", exitPhotoMode);
+photoEl.querySelector('[data-act="photo-save"]').addEventListener("click", savePhoto);
+replayEl.querySelector('[data-act="replay-exit"]').addEventListener("click", exitReplay);
+
+// drag to orbit the photo camera, wheel to zoom
+canvas.addEventListener("pointerdown", (event) => {
+  if (!photo) return;
+  photo.dragging = true;
+  photo.lastX = event.clientX;
+  canvas.setPointerCapture?.(event.pointerId);
+});
+canvas.addEventListener("pointermove", (event) => {
+  if (!photo?.dragging) return;
+  photo.orbit -= (event.clientX - photo.lastX) * 0.009;
+  photo.lastX = event.clientX;
+});
+canvas.addEventListener("pointerup", () => {
+  if (photo) photo.dragging = false;
+});
+canvas.addEventListener("pointercancel", () => {
+  if (photo) photo.dragging = false;
+});
+window.addEventListener(
+  "wheel",
+  (event) => {
+    if (!photo) return;
+    event.preventDefault();
+    photo.zoom = Math.max(0.65, Math.min(2.4, photo.zoom - event.deltaY * 0.0012));
+  },
+  { passive: false },
+);
 
 // ---------- world ----------
 
@@ -372,6 +477,13 @@ let justInstalled = false;
 let refreshInstall = () => {};
 let pauseEl = null;
 let tick = 0;
+let photo = null;
+let replay = null;
+let replayBuffer = [];
+let replayClock = 0;
+let padRemap = null;
+let padRemapRender = null;
+
 let lastInput = { gas: false };
 let toastText = "";
 let toastKind = "boost";
@@ -400,7 +512,11 @@ function startDemo(trackId) {
   toastEl.hidden = true;
 }
 
-function startRace({ trackId, laps, kartsSpec, mode = "race" }) {
+function startRace({ trackId, laps, kartsSpec, mode = "race", weather = prefs.weather }) {
+  padRemap = null;
+  padRemapRender = null;
+  replayBuffer = [];
+  replayClock = 0;
   hideResults();
   hidePause();
   paused = false;
@@ -416,6 +532,7 @@ function startRace({ trackId, laps, kartsSpec, mode = "race" }) {
     remote.target = null;
   }
   const savedGhost = mode === "trial" ? loadGhost(t.def.id) : null;
+  const weatherDef = applyWeather(karts, weather);
   world = {
     state: "countdown",
     mode,
@@ -430,6 +547,7 @@ function startRace({ trackId, laps, kartsSpec, mode = "race" }) {
     lapFrames: [],
     newGhost: false,
     newRecord: false,
+    weather: weatherDef,
   };
   sendTimer = 0;
   wrongWay = 0;
@@ -495,6 +613,17 @@ function startTimeTrial() {
   });
 }
 
+function startDailyChallenge() {
+  const challenge = challengeForDate();
+  startRace({
+    trackId: challenge.trackId,
+    laps: challenge.laps,
+    mode: "trial",
+    weather: "clear",
+    kartsSpec: [{ id: "me", name: "You", color: prefs.color, isMe: true }],
+  });
+}
+
 function startOnlineRace(trackId, laps) {
   const hostKart = { id: "host", name: "Host", color: KartColors[0] };
   const guestKart = { id: "guest", name: "Guest", color: KartColors[1] };
@@ -504,7 +633,7 @@ function startOnlineRace(trackId, laps) {
   mine.name = "You";
   theirs.isRemote = true;
   theirs.name = "Friend";
-  startRace({ trackId, laps, kartsSpec: [hostKart, guestKart] });
+  startRace({ trackId, laps, kartsSpec: [hostKart, guestKart], weather: "clear" });
 }
 
 // ---------- ranking ----------
@@ -798,6 +927,50 @@ function handleKartEvents(kart) {
   kart.wasNitro = kart.nitroOn;
 }
 
+const RubberStrength = { easy: 0.5, normal: 1, hard: 1.15 };
+
+function updateRubberBand(karts) {
+  const strength = RubberStrength[prefs.difficulty] ?? 1;
+  for (const kart of karts) {
+    if (!kart.bot || kart.finished || !me) {
+      kart.rubber = 1;
+      continue;
+    }
+    kart.rubber = rubberBand(kart, me, world.track.N, strength);
+  }
+}
+
+function pollPadRemap() {
+  if (!padRemap) return;
+  const pad = activeGamepad();
+  if (!pad) return;
+  const down = new Set(gamepadDownButtons(pad));
+  if (!padRemap.armed) {
+    if (down.size === 0) padRemap.armed = true;
+    padRemap.last = down;
+    return;
+  }
+  for (const button of down) {
+    if (padRemap.last.has(button)) continue;
+    const { action } = padRemap;
+    const previous = prefs.padBindings[action];
+    prefs.padBindings = normalizePadBindings({ ...prefs.padBindings, [action]: button });
+    for (const other of Object.keys(prefs.padBindings)) {
+      if (other !== action && prefs.padBindings[other] === button) {
+        prefs.padBindings[other] = previous;
+      }
+    }
+    setPadBindings(prefs.padBindings);
+    savePrefs();
+    padRemap = null;
+    padRemapRender?.();
+    padRemapRender = null;
+    showToast(`Gamepad: ${action} is now ${PadButtonNames[button] ?? `#${button}`}`, "info", 1800);
+    return;
+  }
+  padRemap.last = down;
+}
+
 function update(dt, now) {
   if (!world) return;
   const { track: t, karts } = world;
@@ -842,6 +1015,7 @@ function update(dt, now) {
   }
 
   const racing = world.state === "racing";
+  if (world.mode !== "demo") updateRubberBand(karts);
   for (const kart of karts) {
     if (kart.isRemote) {
       updateRemote(dt, now);
@@ -875,6 +1049,7 @@ function update(dt, now) {
   for (const kart of karts) handleBumpEvents(kart);
   recordTrialPoint();
   updateGhost();
+  rememberReplay(dt);
   updateWrongWay(dt, racing);
 
   if (session && me && (racing || me.finished)) {
@@ -933,6 +1108,10 @@ function updateHud() {
   const ghostLine = world.mode === "trial" && world.ghostTime ? `Ghost ${formatTime(world.ghostTime)}` : "";
   hud.ghost.hidden = !ghostLine;
   if (ghostLine) setText("ghost", hud.ghost, ghostLine);
+  const weatherName =
+    world.weather && world.weather.id !== "clear" ? world.weather.label : "";
+  hud.weather.hidden = !weatherName;
+  if (weatherName) setText("weather", hud.weather, weatherName);
   setText("speed", hud.speed, `${Math.round(me.speed / 4)} km/h`);
   hud.draft.hidden = !me.drafting;
   hud.nitro.style.width = `${Math.round(me.nitro * 100)}%`;
@@ -1129,12 +1308,21 @@ function showMenu() {
       <div data-slot="track"></div>
       <p class="record" data-slot="record"></p>
     </div>
+    <div class="daily" data-slot="daily"></div>
     <div class="group"><span class="label">Laps</span><div data-slot="laps"></div></div>
     <div class="group"><span class="label">Rivals</span><div data-slot="difficulty"></div></div>
+    <div class="group"><span class="label">Weather</span><div data-slot="weather"></div></div>
     <div class="group"><span class="label">Your kart</span><div data-slot="color"></div></div>
     <button type="button" class="big primary" data-act="solo"><strong>Race against bots</strong><span>3 bots, one lap or more</span></button>
     <button type="button" class="big" data-act="trial"><strong>Time trial</strong><span data-role="trial-sub"></span></button>
     <button type="button" class="big" data-act="online"><strong>Race a friend online</strong><span>Get an invite link, play from anywhere</span></button>
+    <details class="settings">
+      <summary>Gamepad</summary>
+      <div class="group">
+        <span class="label">Buttons <small>(click one, then press a button on the pad)</small></span>
+        <div data-slot="pad"></div>
+      </div>
+    </details>
     ${
       isTouchDevice
         ? `<details class="settings">
@@ -1182,7 +1370,76 @@ function showMenu() {
       recordLine.append(target);
     }
   };
+
+  const dailySlot = element.querySelector('[data-slot="daily"]');
+  const renderDaily = () => {
+    const challenge = challengeForDate();
+    const built = track(challenge.trackId);
+    const target = medalTargets(built)[challenge.tier];
+    const done = isChallengeDone(challenge.day);
+    dailySlot.replaceChildren();
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `daily-card${done ? " done" : ""}`;
+    button.innerHTML = `<span class="daily-label">Daily challenge${done ? " · done" : ""}</span>
+      <strong>${challenge.tier[0].toUpperCase()}${challenge.tier.slice(1)} lap at ${challenge.trackName}</strong>
+      <span>${done ? "See you tomorrow" : `Beat ${formatTime(target)} · one lap time trial`}</span>`;
+    button.addEventListener("click", () => {
+      userLeftFullscreen = false;
+      startImmersive();
+      startDailyChallenge();
+    });
+    dailySlot.append(button);
+  };
+  const padSlot = element.querySelector('[data-slot="pad"]');
+  const renderPad = () => {
+    if (!padSlot) return;
+    const wrap = document.createElement("div");
+    wrap.className = "pad-binds";
+    const rows = [
+      ["gas", "Gas"],
+      ["brake", "Brake"],
+      ["drift", "Drift"],
+      ["nitro", "Nitro"],
+    ];
+    for (const [action, label] of rows) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "pad-bind";
+      if (padRemap?.action === action) button.classList.add("active");
+      const index = prefs.padBindings[action];
+      button.innerHTML = `<span>${label}</span><strong>${
+        padRemap?.action === action ? "Press a button…" : PadButtonNames[index] ?? `#${index}`
+      }</strong>`;
+      button.addEventListener("click", () => {
+        if (!gamepadAvailable()) {
+          showToast("Connect a controller first", "info", 1800);
+          return;
+        }
+        padRemap = { action, last: new Set(), armed: false };
+        padRemapRender = renderPad;
+        renderPad();
+      });
+      wrap.append(button);
+    }
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "pad-reset";
+    reset.textContent = "Reset buttons";
+    reset.addEventListener("click", () => {
+      prefs.padBindings = { ...DefaultPadBindings };
+      setPadBindings(prefs.padBindings);
+      savePrefs();
+      padRemap = null;
+      padRemapRender = null;
+      renderPad();
+    });
+    wrap.append(reset);
+    padSlot.replaceChildren(wrap);
+  };
+
   const renderChoices = () => {
+    renderPad();
     element.querySelector('[data-slot="track"]').replaceChildren(
       choice(
         Tracks.map((tr) => ({ value: tr.id, text: tr.name })),
@@ -1197,6 +1454,7 @@ function showMenu() {
       ),
     );
     renderRecord();
+    renderDaily();
     element.querySelector('[data-slot="laps"]').replaceChildren(
       choice(
         LapOptions.map((n) => ({ value: n, text: String(n) })),
@@ -1223,6 +1481,18 @@ function showMenu() {
           renderChoices();
         },
         "Rival difficulty",
+      ),
+    );
+    element.querySelector('[data-slot="weather"]').replaceChildren(
+      choice(
+        WeatherOptions.map((w) => ({ value: w.id, text: w.label })),
+        prefs.weather,
+        (value) => {
+          prefs.weather = value;
+          savePrefs();
+          renderChoices();
+        },
+        "Weather",
       ),
     );
     element.querySelector('[data-slot="color"]').replaceChildren(
@@ -1490,6 +1760,148 @@ function hidePause() {
   pauseEl = null;
 }
 
+function rememberReplay(dt) {
+  if (!world || world.mode === "demo" || online || world.state !== "racing") return;
+  replayClock += dt;
+  if (replayClock < 1 / 20) return;
+  replayClock = 0;
+  replayBuffer.push({
+    t: world.raceTime,
+    karts: world.karts.map((kart) => ({
+      x: kart.x,
+      y: kart.y,
+      a: kart.a,
+      color: kart.color,
+      name: kart.name,
+      speed: kart.speed,
+      drifting: kart.drifting,
+      nitroOn: kart.nitroOn,
+      boostTimer: kart.boostTimer,
+      isMe: kart.isMe,
+    })),
+  });
+  if (replayBuffer.length > 240) replayBuffer.shift();
+}
+
+function sampleReplay(time) {
+  const frames = replay.frames;
+  let i = 0;
+  while (i < frames.length - 2 && frames[i + 1].t <= time) i += 1;
+  const a = frames[i];
+  const b = frames[Math.min(frames.length - 1, i + 1)];
+  const span = b.t - a.t || 1;
+  const f = Math.max(0, Math.min(1, (time - a.t) / span));
+  return a.karts.map((kart, index) => {
+    const next = b.karts[index] ?? kart;
+    return {
+      ...kart,
+      x: kart.x + (next.x - kart.x) * f,
+      y: kart.y + (next.y - kart.y) * f,
+      a: kart.a + angleDiff(next.a, kart.a) * f,
+    };
+  });
+}
+
+function enterReplay() {
+  if (
+    replay ||
+    photo ||
+    online ||
+    !world ||
+    world.state !== "racing" ||
+    replayBuffer.length < 20
+  ) {
+    return;
+  }
+  hidePause();
+  paused = true;
+  const first = replayBuffer[0].t;
+  replay = {
+    frames: replayBuffer,
+    time: 0,
+    start: first,
+    duration: Math.max(0.5, replayBuffer[replayBuffer.length - 1].t - first),
+    orbit: 0,
+  };
+  document.body.classList.add("replay-mode");
+  replayEl.hidden = false;
+  resetInput();
+  audio.silence();
+  renderer.resetCamera();
+}
+
+function exitReplay() {
+  if (!replay) return;
+  replay = null;
+  paused = false;
+  document.body.classList.remove("replay-mode");
+  replayEl.hidden = true;
+  resetInput();
+  renderer.resetCamera();
+}
+
+function drawReplay(dt) {
+  replay.time += dt;
+  if (replay.time > replay.duration) replay.time = 0;
+  replay.orbit += dt * 0.12;
+  const time = replay.start + replay.time;
+  const karts = sampleReplay(time);
+  const meReplay = karts.find((kart) => kart.isMe) ?? karts[0];
+  renderer.draw(
+    {
+      track: world.track,
+      karts,
+      me: meReplay,
+      ghost: null,
+      weather: world.weather,
+      photo: { orbit: replay.orbit, zoom: 1.12 },
+    },
+    dt,
+  );
+  const fill = replayEl.querySelector("i");
+  if (fill) fill.style.width = `${Math.min(100, (replay.time / replay.duration) * 100)}%`;
+}
+
+function enterPhotoMode() {
+  if (
+    photo ||
+    online ||
+    !world ||
+    !["racing", "countdown"].includes(world.state) ||
+    resultsEl
+  ) {
+    return;
+  }
+  hidePause();
+  paused = true;
+  photo = { orbit: 0, zoom: 1.35, dragging: false, lastX: 0 };
+  resetInput();
+  audio.silence();
+  document.body.classList.add("photo-mode");
+  photoEl.hidden = false;
+}
+
+function exitPhotoMode() {
+  if (!photo) return;
+  photo = null;
+  paused = false;
+  document.body.classList.remove("photo-mode");
+  photoEl.hidden = true;
+  resetInput();
+}
+
+function savePhoto() {
+  if (!photo) return;
+  const url = renderer.snapshot();
+  if (!url) return;
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `kart-photo-${Date.now()}.png`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
 function showPause() {
   if (pauseEl || resultsEl || !world || !["racing", "countdown"].includes(world.state)) {
     return;
@@ -1500,6 +1912,8 @@ function showPause() {
     <p class="sub">${solo ? "The race is frozen." : "The race keeps going while this is open."}</p>
     <button type="button" class="big primary" data-act="resume"><strong>Resume</strong></button>
     ${usingTilt() ? '<button type="button" class="big" data-act="recenter"><strong>Recenter tilt</strong><span>Hold the phone the way you like, then tap</span></button>' : ""}
+    ${solo && replayBuffer.length >= 20 ? `<button type="button" class="big" data-act="replay"><strong>Replay last 10 s</strong><span>Watch the race from a cinematic camera</span></button>` : ""}
+    ${solo ? `<button type="button" class="big" data-act="photo"><strong>Photo mode</strong><span>Freeze the race and frame a shot</span></button>` : ""}
     ${solo ? `<button type="button" class="big" data-act="restart"><strong>Restart ${world.mode === "trial" ? "time trial" : "race"}</strong></button>` : ""}
     <a class="big" data-role="menu"><strong>${solo ? "Quit to menu" : "Leave race"}</strong></a>
   `);
@@ -1532,6 +1946,8 @@ function showPause() {
     recenterTilt();
     togglePause();
   });
+  panel.querySelector('[data-act="replay"]')?.addEventListener("click", enterReplay);
+  panel.querySelector('[data-act="photo"]')?.addEventListener("click", enterPhotoMode);
   panel.querySelector('[data-act="restart"]')?.addEventListener("click", () => {
     if (world?.mode === "trial") startTimeTrial();
     else startSolo();
@@ -1544,6 +1960,14 @@ function showPause() {
 }
 
 function togglePause() {
+  if (photo) {
+    exitPhotoMode();
+    return;
+  }
+  if (replay) {
+    exitReplay();
+    return;
+  }
   if (pauseEl) {
     hidePause();
     paused = false;
@@ -1656,6 +2080,23 @@ function fillResults() {
     badge.className = "badge ghost";
     badge.textContent = "New ghost saved";
     recordLine.append(badge);
+  }
+  const challenge = challengeForDate();
+  const tierRank = { bronze: 1, silver: 2, gold: 3 };
+  const earned = me.bestLap ? medalForLap(world.track, me.bestLap) : null;
+  const challengeEarned =
+    !online &&
+    challenge.trackId === world.track.def.id &&
+    earned &&
+    tierRank[earned] >= tierRank[challenge.tier];
+  if (challengeEarned) {
+    markChallengeDone(challenge.day);
+    if (isChallengeDone(challenge.day)) {
+      const badge = document.createElement("span");
+      badge.className = "badge daily-done";
+      badge.textContent = "Daily challenge complete";
+      recordLine.append(badge);
+    }
   }
   const rows = resultsEl.querySelector('[data-role="rows"]');
   rows.replaceChildren(
@@ -1836,6 +2277,14 @@ function frame(now) {
   const frameDt = Math.min(0.1, (now - last) / 1000);
   last = now;
 
+  pollPadRemap();
+
+  if (replay) {
+    drawReplay(frameDt);
+    requestAnimationFrame(frame);
+    return;
+  }
+
   // Start on a gamepad opens/closes the pause menu, just like P.
   if (gamepadPausePressed()) togglePause();
 
@@ -1856,8 +2305,15 @@ function frame(now) {
   updateAudio();
   if (world) {
     renderer.draw(
-      { track: world.track, karts: world.karts, me, ghost: world.ghostPos },
-      paused ? 0 : frameDt,
+      {
+        track: world.track,
+        karts: world.karts,
+        me,
+        ghost: world.ghostPos,
+        weather: world.weather,
+        photo,
+      },
+      paused && !photo ? 0 : frameDt,
     );
   }
 

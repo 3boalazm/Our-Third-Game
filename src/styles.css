@@ -120,6 +120,14 @@ input {
   font-weight: 700;
 }
 
+.hud-box.left #weather {
+  color: #cfe4ff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .hud-box.right #speed {
   color: var(--text);
   font-size: 14px;
@@ -833,6 +841,247 @@ body[data-steer="tilt"] .touch-left .brake {
 .medal.bronze {
   background: #d08b4f;
   box-shadow: 0 0 8px rgb(208 139 79 / 35%);
+}
+
+.pad-binds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pad-bind,
+.pad-reset {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 5%);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.pad-bind strong {
+  min-width: 46px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 10%);
+  font-size: 11px;
+  text-align: center;
+}
+
+.pad-bind.active {
+  border-color: #9fe4ff;
+  background: rgb(127 209 255 / 16%);
+  animation: pad-pulse 1s ease-in-out infinite;
+}
+
+.pad-reset {
+  color: var(--soft);
+}
+
+@keyframes pad-pulse {
+  50% {
+    border-color: rgb(159 228 255 / 35%);
+  }
+}
+
+.replay-ui {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 60;
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+  pointer-events: none;
+}
+
+.replay-ui[hidden] {
+  display: none;
+}
+
+.replay-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(560px, 92vw);
+  padding: 10px 12px 10px 16px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 999px;
+  background: rgb(8 12 22 / 78%);
+  box-shadow: 0 10px 40px rgb(0 0 0 / 45%);
+  color: #eaf2ff;
+  font-size: 12px;
+  pointer-events: auto;
+  backdrop-filter: blur(12px);
+}
+
+.replay-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.replay-track {
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 16%);
+}
+
+.replay-track i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: #9fe4ff;
+}
+
+.replay-bar button {
+  padding: 7px 13px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 8%);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+body.replay-mode #hud,
+body.replay-mode #touch,
+body.replay-mode #net,
+body.replay-mode #tip,
+body.replay-mode #toast,
+body.replay-mode #countdown,
+body.replay-mode #wrongway,
+body.replay-mode #lights {
+  display: none !important;
+}
+
+.photo-ui {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 60;
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+  pointer-events: none;
+}
+
+.photo-ui[hidden] {
+  display: none;
+}
+
+.photo-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  max-width: min(760px, 94vw);
+  padding: 10px 12px 10px 16px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 999px;
+  background: rgb(8 12 22 / 78%);
+  box-shadow: 0 10px 40px rgb(0 0 0 / 45%);
+  color: #eaf2ff;
+  font-size: 12px;
+  pointer-events: auto;
+  backdrop-filter: blur(12px);
+}
+
+.photo-hint {
+  color: rgb(234 242 255 / 78%);
+}
+
+.photo-bar button {
+  padding: 7px 13px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 8%);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.photo-bar button:hover {
+  background: rgb(255 255 255 / 16%);
+}
+
+body.photo-mode #hud,
+body.photo-mode #touch,
+body.photo-mode #net,
+body.photo-mode #tip,
+body.photo-mode #toast,
+body.photo-mode #countdown,
+body.photo-mode #wrongway,
+body.photo-mode #lights {
+  display: none !important;
+}
+
+body.photo-mode canvas,
+body.replay-mode canvas {
+  cursor: grab;
+  touch-action: none;
+}
+
+.daily {
+  margin: 4px 0 0;
+}
+
+.daily-card {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 13px;
+  border: 1px solid rgb(127 209 255 / 28%);
+  border-radius: 16px;
+  background: linear-gradient(120deg, rgb(70 150 255 / 14%), rgb(127 209 255 / 5%));
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.daily-card:hover {
+  border-color: rgb(127 209 255 / 55%);
+  background: linear-gradient(120deg, rgb(70 150 255 / 20%), rgb(127 209 255 / 8%));
+}
+
+.daily-card strong {
+  font-size: 13px;
+}
+
+.daily-card span {
+  color: var(--soft);
+  font-size: 11px;
+}
+
+.daily-card .daily-label {
+  color: #9fe4ff;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.daily-card.done {
+  border-color: rgb(96 220 150 / 45%);
+  background: linear-gradient(120deg, rgb(60 190 120 / 14%), rgb(96 220 150 / 4%));
+}
+
+.daily-card.done .daily-label {
+  color: #8bf0be;
+}
+
+.badge.daily-done {
+  background: rgb(80 220 150 / 16%);
+  color: #8bf0be;
 }
 
 .swatches {

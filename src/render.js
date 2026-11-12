@@ -23,6 +23,17 @@ export function createRenderer(canvas) {
   let boostVisual = 0;
   let clock = 0;
   let boostGradient = null;
+  const rainDrops = Array.from({ length: 150 }, (_, i) => {
+    const seed = Math.sin(i * 127.1 + 11.7) * 43758.5453;
+    const r = seed - Math.floor(seed);
+    return {
+      x: r,
+      y: (r * 7.13) % 1,
+      speed: 0.7 + ((r * 13.7) % 1) * 0.9,
+      len: 10 + ((r * 31.3) % 1) * 16,
+      alpha: 0.16 + ((r * 17.9) % 1) * 0.3,
+    };
+  });
 
   // tyre marks are kept in a fixed ring buffer, in world pixels
   const marks = Array.from({ length: MaxMarks }, () => ({ x1: 0, y1: 0, x2: 0, y2: 0, kind: 0 }));
@@ -387,27 +398,97 @@ export function createRenderer(canvas) {
     ctx.restore();
   }
 
-  function draw({ track, karts, me, ghost }, dt) {
+  // Rain streaks, a wet dark tint and night headlights. Drawn in screen space
+  // after the world so it never changes how the track itself is drawn.
+  function drawWeather(weather, dt, project, me, chase, photo) {
+    if (!weather || weather.id === "clear") return;
+    if (weather.id === "rain") {
+      ctx.save();
+      ctx.fillStyle = "rgba(22, 36, 58, 0.22)";
+      ctx.fillRect(0, 0, width, height);
+      ctx.strokeStyle = "rgba(190, 220, 255, 0.45)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      for (const drop of rainDrops) {
+        drop.y += drop.speed * dt;
+        if (drop.y > 1.08) {
+          drop.y -= 1.16;
+          drop.x = (drop.x + 0.37) % 1;
+        }
+        const x = ((drop.x + drop.y * 0.05) % 1) * width;
+        const y = drop.y * height;
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - drop.len * 0.22, y + drop.len);
+      }
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    if (weather.id === "night") {
+      ctx.save();
+      ctx.fillStyle = "rgba(4, 8, 24, 0.56)";
+      ctx.fillRect(0, 0, width, height);
+      if (me) {
+        const p = project(me.x, me.y);
+        const heading = chase ? -Math.PI / 2 - (photo?.orbit ?? 0) : me.a;
+        ctx.globalCompositeOperation = "lighter";
+        ctx.translate(p.x, p.y);
+        ctx.rotate(heading);
+        const beam = ctx.createLinearGradient(0, 0, 300, 0);
+        beam.addColorStop(0, "rgba(255, 235, 170, 0.22)");
+        beam.addColorStop(0.65, "rgba(255, 232, 160, 0.08)");
+        beam.addColorStop(1, "rgba(255, 232, 160, 0)");
+        ctx.fillStyle = beam;
+        ctx.beginPath();
+        ctx.moveTo(8, -20);
+        ctx.lineTo(310, -115);
+        ctx.lineTo(310, 115);
+        ctx.lineTo(8, 20);
+        ctx.closePath();
+        ctx.fill();
+        const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, 170);
+        glow.addColorStop(0, "rgba(255, 236, 178, 0.28)");
+        glow.addColorStop(0.45, "rgba(255, 226, 160, 0.10)");
+        glow.addColorStop(1, "rgba(255, 226, 160, 0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(0, 0, 170, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  function draw({ track, karts, me, ghost, weather, photo }, dt) {
     clock += dt;
     const focus = me ?? karts[0];
-    const chase = cameraMode === "chase";
+    const chase = photo ? true : cameraMode === "chase";
     if (!cam.ready) {
       cam.x = focus.x;
       cam.y = focus.y;
       cam.angle = focus.a;
       cam.ready = true;
     }
-    const follow = Math.min(1, dt * (chase ? 10 : 7));
-    cam.x += (focus.x - cam.x) * follow;
-    cam.y += (focus.y - cam.y) * follow;
-    if (chase) {
-      cam.angle += angleDiff(focus.a, cam.angle) * Math.min(1, dt * 6);
+    if (photo) {
+      // Framed shot: centre the kart, orbit with the pointer/keys, free zoom.
+      const follow = Math.min(1, dt * 8);
+      cam.x += (focus.x - cam.x) * follow;
+      cam.y += (focus.y - cam.y) * follow;
+      cam.angle += angleDiff(focus.a + (photo.orbit ?? 0), cam.angle) * follow;
+      cam.zoom += ((photo.zoom ?? 1.35) - cam.zoom) * follow;
     } else {
-      cam.angle = focus.a; // so switching to the chase camera starts from the right angle
+      const follow = Math.min(1, dt * (chase ? 10 : 7));
+      cam.x += (focus.x - cam.x) * follow;
+      cam.y += (focus.y - cam.y) * follow;
+      if (chase) {
+        cam.angle += angleDiff(focus.a, cam.angle) * Math.min(1, dt * 6);
+      } else {
+        cam.angle = focus.a; // so switching to the chase camera starts from the right angle
+      }
+      // zoom out a little at speed so you can see further ahead
+      const zoomTarget = 1 - 0.16 * Math.min(1, focus.speed / Physics.maxSpeed);
+      cam.zoom += (zoomTarget - cam.zoom) * Math.min(1, dt * 2);
     }
-    // zoom out a little at speed so you can see further ahead
-    const zoomTarget = 1 - 0.16 * Math.min(1, focus.speed / Physics.maxSpeed);
-    cam.zoom += (zoomTarget - cam.zoom) * Math.min(1, dt * 2);
     let fit = Math.max(0.35, Math.min(width, height) / 760) * 1.14;
     // On a short (landscape) screen the kart sits low and only ~70% of the height is
     // road ahead: zoom out enough to still see a good stretch of it.
@@ -415,7 +496,7 @@ export function createRenderer(canvas) {
       fit = Math.min(fit, (0.72 * height) / AheadWorld);
     }
     const scale = fit * cam.zoom;
-    const anchorY = chase ? height * 0.72 : height / 2;
+    const anchorY = chase ? (photo ? height / 2 : height * 0.72) : height / 2;
 
     shakeAmount *= Math.exp(-9 * dt);
     const shakeX = shakeAmount > 0.2 ? (Math.random() - 0.5) * shakeAmount : 0;
@@ -464,14 +545,30 @@ export function createRenderer(canvas) {
     for (const kart of ordered) {
       drawKart(kart, kart === me);
     }
-    for (const kart of ordered) {
-      if (kart !== me) {
-        drawName(kart);
+    if (!photo) {
+      for (const kart of ordered) {
+        if (kart !== me) {
+          drawName(kart);
+        }
       }
     }
     ctx.restore();
 
-    if (boostVisual > 0.03) {
+    // screen-space projection, used by the night headlights
+    const theta = chase ? -Math.PI / 2 - cam.angle : 0;
+    const cosT = Math.cos(theta);
+    const sinT = Math.sin(theta);
+    const project = (x, y) => {
+      const dx = x - cam.x;
+      const dy = y - cam.y;
+      return {
+        x: width / 2 + shakeX + scale * (dx * cosT - dy * sinT),
+        y: anchorY + shakeY + scale * (dx * sinT + dy * cosT),
+      };
+    };
+    drawWeather(weather, dt, project, focus, chase, photo);
+
+    if (!photo && boostVisual > 0.03) {
       drawSpeedLines();
       ctx.save();
       ctx.globalAlpha = boostVisual;
@@ -479,7 +576,7 @@ export function createRenderer(canvas) {
       ctx.fillRect(0, 0, width, height);
       ctx.restore();
     }
-    drawMinimap(track, karts, me, ghost);
+    if (!photo) drawMinimap(track, karts, me, ghost);
   }
 
   // streaks flying out from the centre while the nitro is on
@@ -516,6 +613,13 @@ export function createRenderer(canvas) {
     },
     shake(amount) {
       shakeAmount = Math.max(shakeAmount, amount);
+    },
+    snapshot() {
+      try {
+        return canvas.toDataURL("image/png");
+      } catch {
+        return null;
+      }
     },
     // lower the canvas resolution on slow devices
     setMaxDpr(value) {
