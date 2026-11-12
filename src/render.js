@@ -1,5 +1,6 @@
 import { Physics } from "./game.js";
 import { createParticles } from "./particles.js";
+import { viewport } from "./layout.js";
 
 const Grass = "#4a9a52";
 const GrassLine = "rgba(0, 0, 0, 0.07)";
@@ -17,15 +18,14 @@ export function createRenderer(canvas) {
 
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
-    width = window.innerWidth;
-    height = window.innerHeight;
+    // the size of the game's own drawing area (swapped when turned sideways)
+    ({ w: width, h: height } = viewport());
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(height * dpr);
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
   }
   resize();
-  window.addEventListener("resize", resize);
 
   function drawTrack(track) {
     const w = track.def.width;
@@ -171,7 +171,7 @@ export function createRenderer(canvas) {
     // zoom out a little at speed so you can see further ahead
     const zoomTarget = 1 - 0.16 * Math.min(1, focus.speed / Physics.maxSpeed);
     cam.zoom += (zoomTarget - cam.zoom) * Math.min(1, dt * 2);
-    const scale = Math.max(0.35, Math.min(width, height) / 760) * cam.zoom * 1.05;
+    const scale = Math.max(0.35, Math.min(width, height) / 760) * cam.zoom * 1.14;
 
     shakeAmount *= Math.exp(-9 * dt);
     const shakeX = shakeAmount > 0.2 ? (Math.random() - 0.5) * shakeAmount : 0;

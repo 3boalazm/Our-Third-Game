@@ -28,6 +28,7 @@ import {
   usingTilt,
 } from "./input.js";
 import { audio } from "./audio.js";
+import { initLayout, onLayout, setForceLandscape } from "./layout.js";
 import { createOnlineSession, createRoomId } from "./online.js";
 
 const LapOptions = [1, 3, 5];
@@ -71,6 +72,7 @@ function readPrefs() {
     steer: saved.steer === "buttons" ? "buttons" : "tilt",
     tiltSens: readSens(saved),
     screenMode: saved.screenMode === "landscape" ? "landscape" : "auto",
+    fullscreen: saved.fullscreen !== false,
     flip: saved.flip === true,
     autoDrift: saved.autoDrift !== false,
   };
@@ -102,6 +104,7 @@ root.innerHTML = `
       <div class="hud-buttons">
         <button type="button" id="pause-btn" aria-label="Pause">&#10074;&#10074;</button>
         <button type="button" id="mute-btn" aria-label="Sound on or off"></button>
+        <button type="button" id="fs-btn" aria-label="Fullscreen" hidden>&#9974;</button>
       </div>
     </div>
     <div class="hud-box right">
@@ -127,13 +130,6 @@ root.innerHTML = `
     </div>
   </div>
   <div id="screen"></div>
-  <div id="rotate" hidden>
-    <div class="rotate-card">
-      <div class="rotate-phone" aria-hidden="true"></div>
-      <p>Turn your phone sideways</p>
-      <button type="button" id="rotate-skip">Play upright anyway</button>
-    </div>
-  </div>
 `;
 const $ = (id) => document.getElementById(id);
 const canvas = $("game");
@@ -157,49 +153,71 @@ const muteButton = $("mute-btn");
 const tiltGauge = $("tilt-gauge");
 const tiltPrompt = $("tilt-prompt");
 const driftButton = $("drift-btn");
-const rotateEl = $("rotate");
-const portraitQuery = window.matchMedia("(orientation: portrait)");
+const fsButton = $("fs-btn");
 
-// "Landscape" mode: go fullscreen and lock the screen sideways where the browser
-// allows it (Android). iPhones can't lock, so a "turn your phone" card is shown.
-async function enterLandscape() {
-  if (!isTouchDevice || prefs.screenMode !== "landscape") {
+// "Landscape": if the phone will not turn (it is locked upright), layout.js turns
+// the game itself with CSS. This also asks the browser to lock the screen sideways
+// where that is allowed (Android, in fullscreen).
+onLayout(() => renderer.resize());
+initLayout(root);
+setForceLandscape(prefs.screenMode === "landscape");
+
+const isStandalone = () =>
+  window.matchMedia("(display-mode: standalone)").matches ||
+  window.matchMedia("(display-mode: fullscreen)").matches ||
+  navigator.standalone === true;
+
+let userLeftFullscreen = false;
+
+// Fullscreen as far as the browser allows: Android Chrome and desktop obey, an
+// installed app is already fullscreen, iPhone Safari only allows it for installed apps.
+async function startImmersive() {
+  if (!isTouchDevice) {
     return;
   }
-  try {
-    if (!document.fullscreenElement) {
+  if (prefs.fullscreen && !userLeftFullscreen && !document.fullscreenElement && !isStandalone()) {
+    try {
       await document.documentElement.requestFullscreen?.({ navigationUI: "hide" });
+    } catch {
+      // not allowed here
     }
-  } catch {
-    // not allowed here: the rotate card still works
   }
-  try {
-    await screen.orientation?.lock?.("landscape");
-  } catch {
-    // locking is not supported on this browser
+  if (prefs.screenMode === "landscape") {
+    try {
+      await screen.orientation?.lock?.("landscape");
+    } catch {
+      // locking is not supported: layout.js rotates the game instead
+    }
   }
 }
 
-// Any tap during a race re-tries (the first tap may have been needed for permission).
-window.addEventListener("pointerup", () => {
-  if (world && ["countdown", "racing"].includes(world.state)) {
-    enterLandscape();
+function toggleFullscreen() {
+  if (document.fullscreenElement) {
+    userLeftFullscreen = true;
+    document.exitFullscreen?.();
+  } else {
+    userLeftFullscreen = false;
+    document.documentElement.requestFullscreen?.({ navigationUI: "hide" }).catch(() => {});
+  }
+}
+fsButton.hidden = !document.fullscreenEnabled || isStandalone();
+fsButton.addEventListener("click", toggleFullscreen);
+document.addEventListener("fullscreenchange", () => {
+  if (!document.fullscreenElement && world && ["countdown", "racing"].includes(world.state)) {
+    userLeftFullscreen = true; // the player left on purpose: don't force them back in
+  }
+});
+window.addEventListener("keydown", (event) => {
+  if (event.code === "KeyF" && !event.repeat && document.fullscreenEnabled) {
+    toggleFullscreen();
   }
 });
 
-// True while the "turn your phone" card is covering a solo race.
-function needsRotation() {
-  return (
-    isTouchDevice &&
-    prefs.screenMode === "landscape" &&
-    portraitQuery.matches &&
-    !!world &&
-    ["countdown", "racing"].includes(world.state)
-  );
-}
-$("rotate-skip").addEventListener("click", () => {
-  prefs.screenMode = "auto";
-  savePrefs();
+// A tap during a race re-tries fullscreen (the first tap may have been used for permissions).
+window.addEventListener("pointerup", () => {
+  if (world && ["countdown", "racing"].includes(world.state)) {
+    startImmersive();
+  }
 });
 bindInput(touchEl, { onPause: () => togglePause() });
 
@@ -208,6 +226,7 @@ function applyControls() {
   setControls({ steer: prefs.steer, autoDrift: prefs.autoDrift });
   setTiltOptions({ range: tiltRangeFor(prefs.tiltSens), flip: prefs.flip });
   driftButton.hidden = prefs.autoDrift;
+  setForceLandscape(prefs.screenMode === "landscape");
   document.body.dataset.steer = prefs.steer === "tilt" ? "tilt" : "buttons";
 }
 applyControls();
@@ -266,6 +285,9 @@ let resultsEl = null;
 let resultsTimer = 0;
 let lobbyRefresh = () => {};
 let paused = false;
+let installPrompt = null; // the browser's "install app" offer, kept for our button
+let justInstalled = false;
+let refreshInstall = () => {};
 let pauseEl = null;
 let tick = 0;
 let lastInput = { gas: false };
@@ -738,6 +760,9 @@ function showMenu() {
   const element = card(`
     <h1>Kart Race</h1>
     <p class="sub">Drive fast, stay on the road, beat your friends.</p>
+    <button type="button" class="install" data-act="install" hidden>
+      <strong>Install the app</strong><span>Fullscreen, opens from your home screen, works offline</span>
+    </button>
     <div class="group"><span class="label">Track</span><div data-slot="track"></div></div>
     <div class="group"><span class="label">Laps</span><div data-slot="laps"></div></div>
     <button type="button" class="big primary" data-act="solo"><strong>Race against bots</strong><span>3 bots, one lap or more</span></button>
@@ -750,7 +775,8 @@ function showMenu() {
         <div class="group" data-tilt-only><span class="label">Tilt sensitivity <small>(higher = turns with less tilt)</small></span><div data-slot="sens"></div></div>
         <div class="group" data-tilt-only><span class="label">Tilt direction</span><div data-slot="flip"></div></div>
         <div class="group"><span class="label">Drift</span><div data-slot="drift"></div></div>
-        <div class="group"><span class="label">Screen</span><div data-slot="screen"></div></div>
+        <div class="group"><span class="label">Screen <small>(Landscape turns the game sideways by itself, even if your phone is locked upright)</small></span><div data-slot="screen"></div></div>
+        <div class="group"><span class="label">Fullscreen</span><div data-slot="fullscreen"></div></div>
       </details>`
         : ""
     }
@@ -837,13 +863,29 @@ function showMenu() {
       );
       element.querySelector('[data-slot="screen"]').replaceChildren(
         choice(
-          [{ value: "auto", text: "Any" }, { value: "landscape", text: "Landscape" }],
+          [{ value: "auto", text: "As the phone is" }, { value: "landscape", text: "Landscape" }],
           prefs.screenMode,
           (value) => {
             set("screenMode", value);
-            enterLandscape();
+            startImmersive();
           },
           "Screen",
+        ),
+      );
+      element.querySelector('[data-slot="fullscreen"]').replaceChildren(
+        choice(
+          [{ value: true, text: "On" }, { value: false, text: "Off" }],
+          prefs.fullscreen,
+          (value) => {
+            set("fullscreen", value);
+            if (value) {
+              userLeftFullscreen = false;
+              startImmersive();
+            } else if (document.fullscreenElement) {
+              document.exitFullscreen?.();
+            }
+          },
+          "Fullscreen",
         ),
       );
       element.querySelectorAll("[data-tilt-only]").forEach((row) => {
@@ -852,9 +894,16 @@ function showMenu() {
     };
     renderControls();
   }
+  const installButton = element.querySelector('[data-act="install"]');
+  refreshInstall = () => {
+    installButton.hidden = isStandalone() || justInstalled;
+  };
+  refreshInstall();
+  installButton.addEventListener("click", installApp);
   element.querySelector('[data-act="solo"]').addEventListener("click", () => {
     if (isTouchDevice && prefs.steer === "tilt") enableTilt();
-    enterLandscape();
+    userLeftFullscreen = false;
+    startImmersive();
     startSolo();
   });
   element.querySelector('[data-act="online"]').addEventListener("click", () => {
@@ -962,7 +1011,8 @@ function showLobby() {
   }
   startButton.addEventListener("click", () => {
     if (isTouchDevice && prefs.steer === "tilt") enableTilt();
-    enterLandscape();
+    userLeftFullscreen = false;
+    startImmersive();
     hostStartsRace();
   });
 
@@ -1227,6 +1277,53 @@ if (online) {
   showMenu();
 }
 
+// ---------- install (PWA) ----------
+
+const isIOS =
+  /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault(); // keep it for our own button
+  installPrompt = event;
+  refreshInstall();
+});
+window.addEventListener("appinstalled", () => {
+  installPrompt = null;
+  justInstalled = true;
+  refreshInstall();
+});
+
+async function installApp() {
+  if (installPrompt) {
+    installPrompt.prompt();
+    await installPrompt.userChoice.catch(() => {});
+    installPrompt = null;
+    refreshInstall();
+    return;
+  }
+  // No install prompt available (iPhone Safari, or the browser hasn't offered it yet).
+  const steps = isIOS
+    ? "<li>Tap the <strong>Share</strong> button in Safari (the square with an arrow).</li><li>Choose <strong>Add to Home Screen</strong>.</li><li>Open <strong>Kart Race</strong> from your home screen: it runs fullscreen.</li>"
+    : "<li>Open the browser menu (the three dots).</li><li>Choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li><li>Open <strong>Kart Race</strong> from your home screen: it runs fullscreen.</li>";
+  const panel = card(`
+    <h1>Install the app</h1>
+    <ol class="steps">${steps}</ol>
+    <button type="button" class="big primary" data-act="close"><strong>Got it</strong></button>
+  `);
+  const wrap = document.createElement("div");
+  wrap.className = "overlay";
+  wrap.append(panel);
+  panel.querySelector('[data-act="close"]').addEventListener("click", () => wrap.remove());
+  screen.append(wrap);
+}
+
+if ("serviceWorker" in navigator && import.meta.env.PROD) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}
+
 // ---------- main loop ----------
 
 let last = performance.now();
@@ -1255,9 +1352,7 @@ function frame(now) {
   last = now;
 
   // The physics always advances in equal slices, whatever the screen's frame rate.
-  const rotate = needsRotation();
-  rotateEl.hidden = !rotate;
-  if (!paused && !(rotate && !online)) {
+  if (!paused) {
     accumulator += frameDt;
     let steps = 0;
     while (accumulator >= FixedStep && steps < 6) {

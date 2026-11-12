@@ -8,6 +8,9 @@ A small top-down kart racing game for the browser. Race three bots on your own, 
 - **Drift**: hold Drift while steering through a corner to slide. A clean slide of 0.6 s or more, released on the road, charges the nitro tank and gives a short mini-boost. Crashing or leaving the road cancels the reward
 - **Nitro**: hold to boost (about 3 s from a full tank). The tank slowly refills on its own, much faster with good drifts
 - Sound effects are synthesised in the browser (no audio files); the speaker button mutes them
+- **Install as an app (PWA):** the start menu has an "Install the app" button (Android/Chrome/desktop use the browser's install prompt; on iPhone it shows the Share > Add to Home Screen steps). The installed app opens **fullscreen** and the solo game works offline (a service worker caches the game; online races still need the connection)
+- **Fullscreen:** a button in the race HUD (or the F key) and, on phones, the game asks for fullscreen when a race starts (Controls > Fullscreen can turn that off)
+- **Landscape without turning the phone:** Controls > Screen > Landscape. If the phone is locked upright the game rotates itself sideways with CSS, following how the phone is held (gravity sensor), and tilt steering is adjusted to match. Where the browser allows it, the screen is also locked to landscape
 - Online: the host gets a 4 digit room and an invite link, the friend opens it and plays from any network
 
 ## Run
@@ -36,5 +39,7 @@ Both players connect to a small room relay (a Cloudflare Worker, the same one us
 - `tests/` physics tests
 - `src/render.js` canvas drawing and minimap
 - `src/input.js` keyboard, touch buttons and tilt (gyroscope) steering
+- `src/layout.js` rotates the game sideways for the Landscape option
+- `public/sw.js`, `public/manifest.webmanifest`, `public/icons/` the installable app; `python scripts/make-icons.py` regenerates the icons
 - `src/online.js` relay client with automatic reconnect
 - `src/main.js` menus, lobby, race flow, results, online messages

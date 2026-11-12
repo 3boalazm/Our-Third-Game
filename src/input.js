@@ -45,7 +45,18 @@ export function tiltFromGravity(beta, gamma, angle = 0) {
   return (Math.asin(Math.max(-1, Math.min(1, along))) * 180) / Math.PI;
 }
 
+// While the game is turned sideways by CSS (see layout.js) the phone itself
+// still reports "portrait", so layout.js tells us the angle it is drawn at.
+let screenAngleOverride = null;
+
+export function setScreenAngleOverride(angle) {
+  screenAngleOverride = angle;
+}
+
 function screenAngle() {
+  if (screenAngleOverride !== null) {
+    return screenAngleOverride;
+  }
   if (typeof screen !== "undefined" && screen.orientation) {
     return screen.orientation.angle;
   }
@@ -60,9 +71,16 @@ const tilt = {
   raw: 0, // degrees, filtered
   neutral: 0,
   lastEvent: 0,
+  gx: 0, // gravity direction in the phone's own x / y axes (-1..1)
+  gy: 0,
   range: 24, // degrees of tilt for full lock
   flip: false,
 };
+
+// Which way the phone is held, for layout.js. null when there is no sensor.
+export function deviceGravity() {
+  return performance.now() - tilt.lastEvent < 700 ? { x: tilt.gx, y: tilt.gy } : null;
+}
 
 export function tiltSupported() {
   return typeof window !== "undefined" && "DeviceOrientationEvent" in window;
@@ -79,6 +97,10 @@ function onOrientation(event) {
   if (event.beta == null || event.gamma == null) {
     return;
   }
+  const b = (event.beta * Math.PI) / 180;
+  const g = (event.gamma * Math.PI) / 180;
+  tilt.gx = Math.sin(g) * Math.cos(b);
+  tilt.gy = -Math.sin(b);
   const degrees = tiltFromGravity(event.beta, event.gamma, screenAngle());
   tilt.raw += (degrees - tilt.raw) * 0.5; // light smoothing against sensor noise
   tilt.lastEvent = performance.now();
