@@ -3,8 +3,11 @@
 A small top-down kart racing game for the browser. Race three bots on your own, or race a friend online from anywhere (phone or computer).
 
 - Two tracks (Sunny Loop, Twisty Hills), 1 / 3 / 5 laps
-- Keyboard: arrow keys or WASD, Down or S to brake
-- Phone: the kart accelerates by itself, you steer with the on-screen arrows and brake with the Brake button
+- Keyboard: arrows or WASD drive, Down/S brake, **Shift** drift, **Space** nitro, P or Esc pause
+- Phone: the kart accelerates by itself. Left thumb steers; right thumb has Drift, Nitro and Brake
+- **Drift**: hold Drift while steering through a corner to slide. A clean slide of 0.6 s or more, released on the road, charges the nitro tank and gives a short mini-boost. Crashing or leaving the road cancels the reward
+- **Nitro**: hold to boost (about 3 s from a full tank). The tank slowly refills on its own, much faster with good drifts
+- Sound effects are synthesised in the browser (no audio files); the speaker button mutes them
 - Online: the host gets a 4 digit room and an invite link, the friend opens it and plays from any network
 
 ## Run
@@ -16,7 +19,7 @@ npm install
 npm run dev
 ```
 
-Build for production with `npm run build` (output in `dist`). `npm test` checks that every track is a clean loop that does not run into itself.
+Build for production with `npm run build` (output in `dist`). `npm test` checks that every track is a clean loop that does not run into itself and runs the physics tests (acceleration, frame-rate independence, wall, nitro, drift rewards, lap progress) with Node's built-in test runner.
 
 ## How online play works
 
@@ -27,7 +30,10 @@ Both players connect to a small room relay (a Cloudflare Worker, the same one us
 ## Project layout
 
 - `src/track.js` track definitions, spline sampling, nearest-point lookup
-- `src/game.js` kart physics, bot driver, lap progress
+- `src/game.js` kart physics (fixed 1/60 s step), drift, nitro, bot driver, lap progress
+- `src/particles.js` smoke, flames, grass and sparks (fixed-size pool)
+- `src/audio.js` engine, drift, nitro and crash sounds made with Web Audio
+- `tests/` physics tests
 - `src/render.js` canvas drawing and minimap
 - `src/input.js` keyboard and touch controls
 - `src/online.js` relay client with automatic reconnect

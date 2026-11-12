@@ -1,4 +1,5 @@
 import { Physics } from "./game.js";
+import { createParticles } from "./particles.js";
 
 const Grass = "#4a9a52";
 const GrassLine = "rgba(0, 0, 0, 0.07)";
@@ -6,12 +7,16 @@ const GrassLine = "rgba(0, 0, 0, 0.07)";
 export function createRenderer(canvas) {
   const ctx = canvas.getContext("2d");
   const cam = { x: 0, y: 0, zoom: 1, ready: false };
+  const particles = createParticles();
   let width = 0;
   let height = 0;
   let dpr = 1;
+  let maxDpr = 2;
+  let shakeAmount = 0;
+  let boostVisual = 0;
 
   function resize() {
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
     width = window.innerWidth;
     height = window.innerHeight;
     canvas.width = Math.round(width * dpr);
@@ -68,6 +73,21 @@ export function createRenderer(canvas) {
     ctx.beginPath();
     ctx.roundRect(-24, -12, 52, 28, 8);
     ctx.fill();
+    // nitro flame
+    if (kart.nitroOn) {
+      const flicker = 10 + Math.random() * 8;
+      const flame = ctx.createLinearGradient(-24, 0, -24 - 22 - flicker, 0);
+      flame.addColorStop(0, "rgba(255, 240, 160, 0.95)");
+      flame.addColorStop(0.5, "rgba(255, 120, 40, 0.85)");
+      flame.addColorStop(1, "rgba(120, 200, 255, 0)");
+      ctx.fillStyle = flame;
+      ctx.beginPath();
+      ctx.moveTo(-23, -6);
+      ctx.lineTo(-24 - 22 - flicker, 0);
+      ctx.lineTo(-23, 6);
+      ctx.closePath();
+      ctx.fill();
+    }
     // wheels
     ctx.fillStyle = "#16181f";
     for (const [wx, wy] of [[-16, -15], [14, -15], [-16, 9], [14, 9]]) {
@@ -153,12 +173,17 @@ export function createRenderer(canvas) {
     cam.zoom += (zoomTarget - cam.zoom) * Math.min(1, dt * 2);
     const scale = Math.max(0.35, Math.min(width, height) / 760) * cam.zoom * 1.05;
 
+    shakeAmount *= Math.exp(-9 * dt);
+    const shakeX = shakeAmount > 0.2 ? (Math.random() - 0.5) * shakeAmount : 0;
+    const shakeY = shakeAmount > 0.2 ? (Math.random() - 0.5) * shakeAmount : 0;
+    boostVisual += ((focus.nitroOn ? 1 : 0) - boostVisual) * Math.min(1, dt * 6);
+
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = Grass;
     ctx.fillRect(0, 0, width, height);
 
     ctx.save();
-    ctx.translate(width / 2, height / 2);
+    ctx.translate(width / 2 + shakeX, height / 2 + shakeY);
     ctx.scale(scale, scale);
     ctx.translate(-cam.x, -cam.y);
 
@@ -180,6 +205,7 @@ export function createRenderer(canvas) {
     ctx.stroke();
 
     drawTrack(track);
+    particles.draw(ctx);
     const ordered = [...karts].sort((a, b) => a.y - b.y);
     for (const kart of ordered) {
       drawKart(kart, kart === me);
@@ -191,8 +217,43 @@ export function createRenderer(canvas) {
     }
     ctx.restore();
 
+    if (boostVisual > 0.03) {
+      drawSpeedLines();
+    }
     drawMinimap(track, karts, me);
   }
 
-  return { draw, resize };
+  // streaks flying out from the centre while the nitro is on
+  function drawSpeedLines() {
+    const cx = width / 2;
+    const cy = height / 2;
+    const reach = Math.hypot(cx, cy);
+    ctx.save();
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.22 * boostVisual})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < 18; i += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const from = reach * (0.35 + Math.random() * 0.3);
+      const to = from + reach * (0.15 + Math.random() * 0.25);
+      ctx.moveTo(cx + Math.cos(angle) * from, cy + Math.sin(angle) * from);
+      ctx.lineTo(cx + Math.cos(angle) * to, cy + Math.sin(angle) * to);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  return {
+    draw,
+    resize,
+    particles,
+    shake(amount) {
+      shakeAmount = Math.max(shakeAmount, amount);
+    },
+    // lower the canvas resolution on slow devices
+    setMaxDpr(value) {
+      maxDpr = value;
+      resize();
+    },
+  };
 }

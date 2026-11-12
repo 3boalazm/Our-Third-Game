@@ -1,6 +1,9 @@
 import { nearest } from "./track.js";
 
-// Arcade physics: tuned by feel, in pixels and seconds.
+// Arcade physics: tuned by feel, in pixels and seconds. The simulation always
+// advances in FixedStep slices so it behaves the same at any frame rate.
+export const FixedStep = 1 / 60;
+
 export const Physics = {
   maxSpeed: 560,
   accel: 460,
@@ -8,9 +11,33 @@ export const Physics = {
   reverseMax: 150,
   coast: 0.55, // speed lost per second when no pedal is pressed
   turnRate: 2.6, // radians per second at full steering
-  grip: 7, // how fast sideways sliding dies out
+  grip: 14, // how fast sideways sliding dies out (high = planted)
   offRoadFactor: 0.42, // top speed on grass relative to the road
   barrierMargin: 95, // invisible wall this far outside the road edge
+
+  // Drift: hold the button while steering to slide. A long, clean slide that
+  // you release on the road is paid back as nitro and a short mini-boost.
+  driftGrip: 5,
+  driftTurn: 1.35, // extra turn rate while drifting
+  driftMinSpeed: 240,
+  driftSlipMin: 100, // sideways speed that counts as a real slide
+  driftMinTime: 0.6, // slides shorter than this earn nothing
+  driftToNitro: 0.16, // nitro earned per second of sliding
+  driftNitroCap: 0.5,
+  driftSpeedLoss: 0.15,
+
+  // Nitro
+  startNitro: 0.3,
+  nitroDrain: 0.34, // per second while held (a full tank lasts ~3 s)
+  nitroStartMin: 0.08, // can't start on fumes
+  nitroTop: 1.4,
+  nitroAccel: 2.4,
+  regenHuman: 0.015,
+  regenBot: 0.045,
+
+  // Mini-boost after a good drift
+  boostTop: 1.22,
+  boostAccel: 1.7,
 };
 
 export const KartColors = ["#4f6bff", "#ff5a5f", "#2bb673", "#f5a623", "#a259ff", "#14b8c4"];
@@ -40,9 +67,19 @@ export function makeKart({
     speed: 0,
     lastIdx: 0,
     dist: 0,
+    offRoad: false,
     progress: 0, // samples travelled; 0 is the start line, lap n ends at n * N
     finished: false,
     finishTime: 0,
+    // abilities
+    nitro: Physics.startNitro, // 0..1 tank
+    nitroOn: false,
+    drifting: false,
+    driftTime: 0, // seconds of the current slide
+    boostTimer: 0, // seconds of mini-boost left
+    // one-shot events, read and cleared by the game loop (sound, particles)
+    hit: 0, // wall impact speed this step
+    driftReward: 0, // seconds of the slide that was just paid out
   };
 }
 
@@ -61,9 +98,17 @@ export function placeOnGrid(kart, track, slot) {
   kart.speed = 0;
   kart.lastIdx = idx;
   kart.dist = Math.abs(offset);
+  kart.offRoad = false;
   kart.progress = -back;
   kart.finished = false;
   kart.finishTime = 0;
+  kart.nitro = Physics.startNitro;
+  kart.nitroOn = false;
+  kart.drifting = false;
+  kart.driftTime = 0;
+  kart.boostTimer = 0;
+  kart.hit = 0;
+  kart.driftReward = 0;
 }
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -75,7 +120,7 @@ export function angleDiff(target, current) {
   return d;
 }
 
-// input: { steer: -1..1 (negative = left), gas: bool, brake: bool }
+// input: { steer: -1..1 (negative = left), gas, brake, drift, nitro }
 export function stepKart(kart, input, dt, track, canDrive) {
   const P = Physics;
   let fx = Math.cos(kart.a);
@@ -83,30 +128,71 @@ export function stepKart(kart, input, dt, track, canDrive) {
   let along = kart.vx * fx + kart.vy * fy;
   let side = kart.vx * -fy + kart.vy * fx;
 
+  const bx = fx; // heading at the start of the step
+  const by = fy;
   const onRoad = kart.dist <= track.halfWidth;
-  const top = P.maxSpeed * kart.skill * (onRoad ? 1 : P.offRoadFactor);
 
-  if (canDrive && input.gas && !input.brake) {
-    if (along < top) along = Math.min(top, along + P.accel * dt);
+  // --- nitro tank ---
+  if (canDrive && input.nitro && kart.nitro > (kart.nitroOn ? 0 : P.nitroStartMin)) {
+    kart.nitroOn = true;
+    kart.nitro = Math.max(0, kart.nitro - P.nitroDrain * dt);
+    if (kart.nitro === 0) kart.nitroOn = false;
+  } else {
+    kart.nitroOn = false;
+    kart.nitro = Math.min(1, kart.nitro + (kart.bot ? P.regenBot : P.regenHuman) * dt);
+  }
+  kart.boostTimer = Math.max(0, kart.boostTimer - dt);
+
+  const power = kart.nitroOn ? P.nitroTop : kart.boostTimer > 0 ? P.boostTop : 1;
+  const thrust = kart.nitroOn ? P.nitroAccel : kart.boostTimer > 0 ? P.boostAccel : 1;
+  const top = P.maxSpeed * kart.skill * (onRoad ? 1 : P.offRoadFactor) * power;
+
+  // --- throttle / brake ---
+  if (canDrive && (input.gas || kart.nitroOn) && !input.brake) {
+    if (along < top) along = Math.min(top, along + P.accel * thrust * dt);
   } else if (canDrive && input.brake) {
     along = Math.max(-P.reverseMax, along - P.brake * dt);
   } else {
     along *= Math.exp(-P.coast * dt);
   }
   if (along > top) {
-    along -= (along - top) * Math.min(1, 4 * dt); // grass slows you down
+    along -= (along - top) * Math.min(1, 4 * dt); // grass (or the end of a boost) slows you down
   }
-  side *= Math.exp(-P.grip * dt);
 
+  // --- drift ---
   const steer = canDrive ? input.steer : 0;
+  const slip = Math.abs(side);
+  const drifting =
+    canDrive && !!input.drift && onRoad && along > P.driftMinSpeed && Math.abs(steer) > 0.25;
+  if (drifting) {
+    if (slip > P.driftSlipMin) kart.driftTime += dt;
+    along *= Math.exp(-P.driftSpeedLoss * dt);
+  } else if (kart.driftTime > 0) {
+    if (kart.driftTime >= P.driftMinTime && onRoad) {
+      kart.nitro = Math.min(
+        1,
+        kart.nitro + Math.min(P.driftNitroCap, kart.driftTime * P.driftToNitro),
+      );
+      kart.boostTimer = Math.min(1, 0.3 + kart.driftTime * 0.15);
+      kart.driftReward = kart.driftTime;
+    }
+    kart.driftTime = 0;
+  }
+  kart.drifting = drifting;
+  side *= Math.exp(-(drifting ? P.driftGrip : P.grip) * dt);
+
+  // --- steering ---
   const control = clamp(Math.abs(along) / 170, 0, 1);
   const slowDown = 1 - 0.3 * clamp(Math.abs(along) / P.maxSpeed, 0, 1);
-  kart.a += steer * P.turnRate * control * slowDown * (along >= 0 ? 1 : -1) * dt;
+  kart.a +=
+    steer * P.turnRate * (drifting ? P.driftTurn : 1) * control * slowDown *
+    (along >= 0 ? 1 : -1) * dt;
 
-  fx = Math.cos(kart.a);
-  fy = Math.sin(kart.a);
-  kart.vx = fx * along + -fy * side;
-  kart.vy = fy * along + fx * side;
+  // Rebuild the velocity with the heading from *before* this step's steering.
+  // The kart then keeps travelling where it was going while its nose turns, so
+  // next step part of its speed is sideways: that is the slide.
+  kart.vx = bx * along + -by * side;
+  kart.vy = by * along + bx * side;
   kart.x += kart.vx * dt;
   kart.y += kart.vy * dt;
 
@@ -126,8 +212,11 @@ export function stepKart(kart, input, dt, track, canDrive) {
     if (outward > 0) {
       kart.vx -= dx * outward * 1.3;
       kart.vy -= dy * outward * 1.3;
+      kart.hit = Math.max(kart.hit, outward);
+      kart.driftTime = 0; // crashing cancels the drift reward
     }
   }
+  kart.offRoad = kart.dist > track.halfWidth;
 
   let delta = near.idx - kart.lastIdx;
   if (delta > track.N / 2) delta -= track.N;
@@ -138,6 +227,7 @@ export function stepKart(kart, input, dt, track, canDrive) {
 }
 
 // A bot looks a few samples ahead on the centre line and steers at that point.
+// It spends its nitro on straights and never drifts (keeps the AI simple).
 export function botInput(kart, track) {
   const { samples, N } = track;
   const lookahead = 9 + Math.floor(kart.speed / 55);
@@ -146,10 +236,13 @@ export function botInput(kart, track) {
   const diff = angleDiff(desired, kart.a);
   const sharp = Math.abs(diff);
   const wanted = Physics.maxSpeed * kart.skill * (1 - Math.min(0.5, sharp * 0.75));
+  const boosting = kart.nitroOn;
   return {
     steer: clamp(diff * 2.4, -1, 1),
-    gas: kart.speed < wanted,
-    brake: kart.speed > wanted * 1.25 && sharp > 0.45,
+    gas: kart.speed < wanted || boosting,
+    brake: !boosting && kart.speed > wanted * 1.25 && sharp > 0.45,
+    drift: false,
+    nitro: boosting ? kart.nitro > 0.02 && sharp < 0.2 : kart.nitro > 0.6 && sharp < 0.06,
   };
 }
 

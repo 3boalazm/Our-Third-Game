@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node scripts/check-tracks.mjs"
+    "test": "node scripts/check-tracks.mjs && node --test tests/"
   },
   "devDependencies": {
     "vite": "^6.0.5"

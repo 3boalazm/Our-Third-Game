@@ -1,7 +1,9 @@
 import "./styles.css";
 import { Tracks, buildTrack, trackById } from "./track.js";
 import {
+  FixedStep,
   KartColors,
+  Physics,
   angleDiff,
   botInput,
   formatTime,
@@ -10,7 +12,8 @@ import {
   stepKart,
 } from "./game.js";
 import { createRenderer } from "./render.js";
-import { bindInput, isTouchDevice, readInput } from "./input.js";
+import { bindInput, isTouchDevice, readInput, resetInput } from "./input.js";
+import { audio } from "./audio.js";
 import { createOnlineSession, createRoomId } from "./online.js";
 
 const LapOptions = [1, 3, 5];
@@ -33,6 +36,8 @@ function readPrefs() {
   return {
     laps: LapOptions.includes(laps) ? laps : 3,
     track: trackById(params.get("track") ?? saved.track).id,
+    sound: saved.sound !== false,
+    tutorialSeen: saved.tutorialSeen === true,
   };
 }
 const prefs = readPrefs();
@@ -57,27 +62,76 @@ const root = document.getElementById("app");
 root.innerHTML = `
   <canvas id="game"></canvas>
   <div id="hud" hidden>
-    <div class="hud-box"><span id="lap"></span><span id="pos"></span></div>
-    <div class="hud-box right"><span id="time"></span><span id="speed"></span></div>
+    <div class="hud-left">
+      <div class="hud-box"><span id="lap"></span><span id="pos"></span></div>
+      <div class="hud-buttons">
+        <button type="button" id="pause-btn" aria-label="Pause">&#10074;&#10074;</button>
+        <button type="button" id="mute-btn" aria-label="Sound on or off"></button>
+      </div>
+    </div>
+    <div class="hud-box right">
+      <span id="time"></span><span id="speed"></span>
+      <div class="meter" role="img" aria-label="Nitro tank"><i id="nitro-fill"></i></div>
+    </div>
   </div>
   <div id="net" hidden></div>
   <div id="countdown" hidden></div>
+  <div id="toast" hidden></div>
+  <div id="tip" hidden></div>
   <div id="touch" hidden>
-    <button type="button" data-touch="left" aria-label="Steer left">&#9664;</button>
-    <button type="button" data-touch="brake" aria-label="Brake">Brake</button>
-    <button type="button" data-touch="right" aria-label="Steer right">&#9654;</button>
+    <div class="touch-left">
+      <button type="button" data-touch="left" aria-label="Steer left">&#9664;</button>
+      <button type="button" data-touch="right" aria-label="Steer right">&#9654;</button>
+    </div>
+    <div class="touch-right">
+      <button type="button" class="small" data-touch="brake" aria-label="Brake">Brake</button>
+      <button type="button" class="mid" data-touch="drift" aria-label="Drift">Drift</button>
+      <button type="button" class="large" data-touch="nitro" aria-label="Nitro">Nitro</button>
+    </div>
   </div>
   <div id="screen"></div>
 `;
 const $ = (id) => document.getElementById(id);
 const canvas = $("game");
 const renderer = createRenderer(canvas);
-const hud = { root: $("hud"), lap: $("lap"), pos: $("pos"), time: $("time"), speed: $("speed") };
+const hud = {
+  root: $("hud"),
+  lap: $("lap"),
+  pos: $("pos"),
+  time: $("time"),
+  speed: $("speed"),
+  nitro: $("nitro-fill"),
+};
 const netBadge = $("net");
 const countdownEl = $("countdown");
+const toastEl = $("toast");
+const tipEl = $("tip");
 const touchEl = $("touch");
 const screen = $("screen");
-bindInput(touchEl);
+const pauseButton = $("pause-btn");
+const muteButton = $("mute-btn");
+bindInput(touchEl, { onPause: () => togglePause() });
+
+// Browsers only allow sound after a tap or key press.
+function unlockAudio() {
+  audio.unlock();
+  window.removeEventListener("pointerdown", unlockAudio);
+  window.removeEventListener("keydown", unlockAudio);
+}
+window.addEventListener("pointerdown", unlockAudio);
+window.addEventListener("keydown", unlockAudio);
+audio.setMuted(!prefs.sound);
+function renderMute() {
+  muteButton.textContent = prefs.sound ? "\u{1F50A}" : "\u{1F507}";
+}
+renderMute();
+muteButton.addEventListener("click", () => {
+  prefs.sound = !prefs.sound;
+  audio.setMuted(!prefs.sound);
+  savePrefs();
+  renderMute();
+});
+pauseButton.addEventListener("click", () => togglePause());
 
 // ---------- world ----------
 
@@ -99,6 +153,12 @@ let sendTimer = 0;
 let resultsEl = null;
 let resultsTimer = 0;
 let lobbyRefresh = () => {};
+let paused = false;
+let pauseEl = null;
+let tick = 0;
+let lastInput = { gas: false };
+let toastText = "";
+let toastUntil = 0;
 
 function startDemo(trackId) {
   const t = track(trackId);
@@ -109,10 +169,15 @@ function startDemo(trackId) {
   world = { state: "demo", track: t, karts, laps: 99, raceTime: 0 };
   me = null;
   remote = null;
+  renderer.particles.clear();
 }
 
 function startRace({ trackId, laps, kartsSpec }) {
   hideResults();
+  hidePause();
+  paused = false;
+  resetInput();
+  renderer.particles.clear();
   screen.replaceChildren();
   const t = track(trackId);
   const karts = kartsSpec.map((spec) => makeKart(spec));
@@ -126,6 +191,23 @@ function startRace({ trackId, laps, kartsSpec }) {
   sendTimer = 0;
   hud.root.hidden = false;
   touchEl.hidden = !isTouchDevice;
+  showTip();
+}
+
+// One-time hint about the new controls, shown during the first countdown.
+function showTip() {
+  if (prefs.tutorialSeen) {
+    return;
+  }
+  prefs.tutorialSeen = true;
+  savePrefs();
+  tipEl.textContent = isTouchDevice
+    ? "Hold Drift while steering through a corner, let go to charge Nitro, then hold Nitro on the straights."
+    : "Hold Shift while turning to drift. Let go to charge nitro, then hold Space to boost.";
+  tipEl.hidden = false;
+  setTimeout(() => {
+    tipEl.hidden = true;
+  }, 9000);
 }
 
 function startSolo() {
@@ -187,6 +269,8 @@ function updateRemote(dt, now) {
   }
   remote.a += angleDiff(target.a, remote.a) * follow;
   remote.speed = target.v;
+  remote.nitroOn = target.nitroOn;
+  remote.drifting = target.drifting;
   if (!remote.finished) {
     remote.progress = target.p;
   }
@@ -201,22 +285,129 @@ function checkFinish(kart) {
   return false;
 }
 
+function vibrate(ms) {
+  if (prefs.sound && navigator.vibrate) {
+    navigator.vibrate(ms);
+  }
+}
+
+const SmokeColors = ["#f2f2f2", "#d8d8d8"];
+const FlameColors = ["#ffd36b", "#ff8a3d", "#7fd1ff"];
+const GrassColors = ["#2f7a3a", "#6bbf5a", "#8a6b3a"];
+const rand = (spread) => (Math.random() - 0.5) * spread;
+
+// Smoke, flames, grass and sparks for one kart on this physics step.
+function emitEffects(kart) {
+  const fx = renderer.particles;
+  const cos = Math.cos(kart.a);
+  const sin = Math.sin(kart.a);
+  const rearX = kart.x - cos * 22;
+  const rearY = kart.y - sin * 22;
+
+  if (kart.drifting && kart.speed > 180) {
+    for (const side of [-1, 1]) {
+      fx.emit(
+        "smoke",
+        rearX - sin * side * 11,
+        rearY + cos * side * 11,
+        rand(40) - cos * 30,
+        rand(40) - sin * 30,
+        0.55,
+        6,
+        SmokeColors[tick % 2],
+        26,
+      );
+    }
+  }
+  if (kart.nitroOn) {
+    fx.emit(
+      "flame",
+      rearX - cos * 8,
+      rearY - sin * 8,
+      -cos * 170 + rand(50),
+      -sin * 170 + rand(50),
+      0.3,
+      10,
+      FlameColors[tick % 3],
+    );
+  } else if (kart.boostTimer > 0 && tick % 2 === 0) {
+    fx.emit("flame", rearX, rearY, -cos * 90 + rand(40), -sin * 90 + rand(40), 0.22, 6, FlameColors[2]);
+  }
+  if (kart.offRoad && kart.speed > 140 && tick % 2 === 0) {
+    fx.emit(
+      "grass",
+      rearX,
+      rearY,
+      rand(120) - cos * 70,
+      rand(120) - sin * 70,
+      0.45,
+      4,
+      GrassColors[tick % 3],
+    );
+  }
+}
+
+// Sounds, vibration, sparks and camera shake for things that happened this step.
+function handleKartEvents(kart) {
+  const mine = kart === me;
+  if (kart.hit > 120) {
+    const fx = renderer.particles;
+    for (let i = 0; i < 6; i += 1) {
+      fx.emit("spark", kart.x, kart.y, rand(420), rand(420), 0.35, 3, "#ffd36b");
+    }
+    if (mine) {
+      renderer.shake(Math.min(16, kart.hit / 35));
+      audio.crash(kart.hit / 500);
+      vibrate(30);
+    }
+  }
+  kart.hit = 0;
+  if (kart.driftReward > 0) {
+    if (mine) {
+      toastText = "Drift boost!";
+      toastUntil = performance.now() + 1100;
+      audio.boost();
+      vibrate(20);
+    }
+    kart.driftReward = 0;
+  }
+  if (mine && kart.nitroOn && !kart.wasNitro) {
+    audio.boost();
+    vibrate(15);
+  }
+  kart.wasNitro = kart.nitroOn;
+}
+
 function update(dt, now) {
   if (!world) return;
   const { track: t, karts } = world;
+  tick += 1;
+  renderer.particles.update(dt);
 
   if (world.state === "demo") {
     for (const kart of karts) {
       stepKart(kart, botInput(kart, t), dt, t, true);
+      if (tick % 3 === 0) emitEffects(kart);
+      kart.hit = 0;
+      kart.driftReward = 0;
     }
     return;
   }
 
   if (world.state === "countdown") {
     world.countdown -= dt;
+    const n = Math.ceil(world.countdown - 0.2);
+    if (n !== world.lastCount) {
+      world.lastCount = n;
+      if (n > 0) audio.countdown(false);
+    }
     if (world.countdown <= 0) {
       world.state = "racing";
       world.goFlash = 0.9;
+      audio.countdown(true);
+      setTimeout(() => {
+        tipEl.hidden = true;
+      }, 4000);
     }
   } else if (world.state === "racing") {
     world.raceTime += dt;
@@ -227,20 +418,27 @@ function update(dt, now) {
   for (const kart of karts) {
     if (kart.isRemote) {
       updateRemote(dt, now);
+      emitEffects(kart);
       continue;
     }
     let input;
     if (kart.isMe && !kart.finished && !(import.meta.env.DEV && window.__kartAuto)) {
-      input = readInput();
+      input = readInput(dt);
+      lastInput = input;
     } else {
       input = botInput(kart, t);
       if (kart.isMe) {
         input.gas = kart.speed < 330; // coast round after finishing
+        input.nitro = false;
+        lastInput = input;
       }
     }
     stepKart(kart, input, dt, t, racing || kart.finished);
+    emitEffects(kart);
+    handleKartEvents(kart);
     if (racing && checkFinish(kart) && kart === me) {
       session?.send({ t: "fin", time: kart.finishTime });
+      audio.finish(standings().indexOf(me) === 0);
       showResults();
     }
   }
@@ -257,6 +455,7 @@ function update(dt, now) {
         v: Math.round(me.speed),
         p: Math.round(me.progress * 10) / 10,
         f: me.finished ? me.finishTime : 0, // repeated, so a lost "fin" message heals itself
+        m: (me.nitroOn ? 1 : 0) | (me.drifting ? 2 : 0), // effects: nitro flame, drift smoke
       });
     }
   }
@@ -290,6 +489,23 @@ function updateHud() {
   setText("pos", hud.pos, `${ordinal(rank)} of ${world.karts.length}`);
   setText("time", hud.time, formatTime(Math.max(0, world.raceTime)));
   setText("speed", hud.speed, `${Math.round(me.speed / 4)} km/h`);
+  hud.nitro.style.width = `${Math.round(me.nitro * 100)}%`;
+  hud.nitro.classList.toggle("on", me.nitroOn);
+  hud.nitro.classList.toggle("low", me.nitro < 0.12);
+
+  // live drift read-out, or the last "boost" message
+  const nowMs = performance.now();
+  if (me.drifting && me.driftTime > 0.25) {
+    toastEl.hidden = false;
+    toastEl.dataset.kind = me.driftTime >= Physics.driftMinTime ? "good" : "warm";
+    setText("toast", toastEl, `Drift ${me.driftTime.toFixed(1)}s`);
+  } else if (toastUntil > nowMs) {
+    toastEl.hidden = false;
+    toastEl.dataset.kind = "boost";
+    setText("toast", toastEl, toastText);
+  } else {
+    toastEl.hidden = true;
+  }
 
   if (world.state === "countdown") {
     const n = Math.ceil(world.countdown - 0.2);
@@ -355,6 +571,9 @@ function showMenu() {
   netBadge.hidden = true;
   countdownEl.hidden = true;
   hideResults();
+  hidePause();
+  paused = false;
+  audio.silence();
   startDemo(prefs.track);
 
   const element = card(`
@@ -366,8 +585,8 @@ function showMenu() {
     <button type="button" class="big" data-act="online"><strong>Race a friend online</strong><span>Get an invite link, play from anywhere</span></button>
     <p class="hint">${
       isTouchDevice
-        ? "Touch: you accelerate automatically. Use the arrows to steer and Brake to slow down."
-        : "Keyboard: arrow keys or WASD to drive, Down or S to brake."
+        ? "Touch: the kart accelerates by itself. Steer with the arrows, hold Drift in corners, then use Nitro."
+        : "Keyboard: arrows or WASD drive, Shift drifts, Space is nitro, P pauses."
     }</p>
     <a class="footer" href="check.html">Connection check</a>
   `);
@@ -484,13 +703,84 @@ function showLobby() {
   lobbyRefresh();
 }
 
+// The "go" message is repeated until the friend confirms it, so a message that
+// gets lost on the way can never leave them stuck in the lobby.
+let currentRaceId = 0;
+let goAcked = 0;
+let goTimer = null;
+
 function hostStartsRace() {
   if (online?.role !== "host" || netState !== "connected") {
     return;
   }
-  session.send({ t: "go", track: prefs.track, laps: prefs.laps });
+  const message = { t: "go", id: Date.now(), track: prefs.track, laps: prefs.laps };
+  currentRaceId = message.id;
   startOnlineRace(prefs.track, prefs.laps);
+  clearInterval(goTimer);
+  let tries = 0;
+  session.send(message);
+  goTimer = setInterval(() => {
+    tries += 1;
+    if (goAcked === message.id || tries > 12) {
+      clearInterval(goTimer);
+      return;
+    }
+    session.send(message);
+  }, 700);
 }
+
+// ---------- pause ----------
+
+function hidePause() {
+  pauseEl?.remove();
+  pauseEl = null;
+}
+
+function showPause() {
+  if (pauseEl || resultsEl || !world || !["racing", "countdown"].includes(world.state)) {
+    return;
+  }
+  const solo = !online;
+  const panel = card(`
+    <h1>${solo ? "Paused" : "Race menu"}</h1>
+    <p class="sub">${solo ? "The race is frozen." : "The race keeps going while this is open."}</p>
+    <button type="button" class="big primary" data-act="resume"><strong>Resume</strong></button>
+    ${solo ? '<button type="button" class="big" data-act="restart"><strong>Restart race</strong></button>' : ""}
+    <a class="big" data-role="menu"><strong>${solo ? "Quit to menu" : "Leave race"}</strong></a>
+  `);
+  panel.querySelector('[data-role="menu"]').href = window.location.pathname;
+  panel.querySelector('[data-act="resume"]').addEventListener("click", () => togglePause());
+  panel.querySelector('[data-act="restart"]')?.addEventListener("click", startSolo);
+  const wrap = document.createElement("div");
+  wrap.className = "overlay";
+  wrap.append(panel);
+  screen.append(wrap);
+  pauseEl = wrap;
+}
+
+function togglePause() {
+  if (pauseEl) {
+    hidePause();
+    paused = false;
+    return;
+  }
+  if (!world || !["racing", "countdown"].includes(world.state) || resultsEl) {
+    return;
+  }
+  showPause();
+  if (pauseEl && !online) {
+    paused = true; // online races can't be frozen: the friend keeps driving
+    audio.silence();
+    resetInput();
+  }
+}
+
+// A solo race should not run on while the tab is hidden.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && !online && !paused) {
+    togglePause();
+  }
+});
 
 // ---------- results ----------
 
@@ -501,6 +791,8 @@ function hideResults() {
 
 function showResults() {
   if (resultsEl) return;
+  hidePause();
+  paused = false;
   const panel = card(`
     <h1 data-role="title"></h1>
     <ol class="results" data-role="rows"></ol>
@@ -567,11 +859,17 @@ function fillResults() {
 
 function handleMessage(message) {
   if (message.t === "go" && online?.role === "guest") {
-    const id = trackById(message.track).id;
-    const laps = LapOptions.includes(message.laps) ? message.laps : 3;
-    prefs.track = id;
-    prefs.laps = laps;
-    startOnlineRace(id, laps);
+    session.send({ t: "goack", id: message.id });
+    if (message.id !== currentRaceId) {
+      currentRaceId = message.id;
+      const id = trackById(message.track).id;
+      const laps = LapOptions.includes(message.laps) ? message.laps : 3;
+      prefs.track = id;
+      prefs.laps = laps;
+      startOnlineRace(id, laps);
+    }
+  } else if (message.t === "goack") {
+    goAcked = message.id;
   } else if (message.t === "s" && remote && world?.state !== "demo") {
     if ([message.x, message.y, message.a, message.v, message.p].every(Number.isFinite)) {
       remote.target = {
@@ -580,6 +878,8 @@ function handleMessage(message) {
         a: message.a,
         v: message.v,
         p: message.p,
+        nitroOn: (message.m & 1) === 1,
+        drifting: (message.m & 2) === 2,
         t: performance.now(),
       };
       if (!remote.seen) {
@@ -636,13 +936,59 @@ if (online) {
 // ---------- main loop ----------
 
 let last = performance.now();
+let accumulator = 0;
+let frameAverage = 1 / 60;
+let slowFrames = 0;
+let lowQuality = false;
+
+function updateAudio() {
+  if (!world || !me || paused || world.state === "demo") {
+    audio.silence();
+    return;
+  }
+  const counting = world.state === "countdown";
+  audio.engine({
+    speed01: me.speed / Physics.maxSpeed,
+    throttle: counting ? 0.15 : lastInput.gas || me.nitroOn ? 1 : 0.2,
+    nitro: me.nitroOn,
+    drifting: me.drifting,
+    offRoad: me.offRoad,
+  });
+}
+
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000);
+  const frameDt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  update(dt, now);
+
+  // The physics always advances in equal slices, whatever the screen's frame rate.
+  if (!paused) {
+    accumulator += frameDt;
+    let steps = 0;
+    while (accumulator >= FixedStep && steps < 6) {
+      update(FixedStep, now);
+      accumulator -= FixedStep;
+      steps += 1;
+    }
+    if (steps === 6) {
+      accumulator = 0; // too far behind (slow phone): drop the backlog
+    }
+  }
   updateHud();
+  updateAudio();
   if (world) {
-    renderer.draw({ track: world.track, karts: world.karts, me }, dt);
+    renderer.draw({ track: world.track, karts: world.karts, me }, paused ? 0 : frameDt);
+  }
+
+  // Slow device? Draw at a lower resolution instead of stuttering.
+  frameAverage += (frameDt - frameAverage) * 0.05;
+  if (!lowQuality && !paused && world?.state === "racing" && frameAverage > 1 / 38) {
+    slowFrames += 1;
+    if (slowFrames > 120) {
+      lowQuality = true;
+      renderer.setMaxDpr(1);
+    }
+  } else {
+    slowFrames = 0;
   }
   requestAnimationFrame(frame);
 }
@@ -663,8 +1009,11 @@ if (import.meta.env.DEV) {
       return remote;
     },
     // advance the simulation without waiting for animation frames
-    step(dt, now = performance.now()) {
-      update(dt, now);
+    step(dt = FixedStep, now = performance.now()) {
+      const count = Math.max(1, Math.round(dt / FixedStep));
+      for (let i = 0; i < count; i += 1) {
+        update(FixedStep, now);
+      }
       updateHud();
     },
   };

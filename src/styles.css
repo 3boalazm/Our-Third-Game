@@ -130,6 +130,144 @@ input {
   pointer-events: none;
 }
 
+
+.hud-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.hud-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.hud-buttons button {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: rgb(10 14 26 / 62%);
+  color: #fff;
+  font-size: 16px;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.meter {
+  position: relative;
+  width: 100%;
+  min-width: 96px;
+  height: 10px;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 16%);
+}
+
+.meter i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #ff8a3d, #ffd36b);
+  transition: width 90ms linear;
+}
+
+.meter i.on {
+  background: linear-gradient(90deg, #7fd1ff, #ffffff);
+  box-shadow: 0 0 10px #7fd1ff;
+}
+
+.meter i.low {
+  opacity: 0.6;
+}
+
+#toast {
+  position: absolute;
+  top: 34%;
+  left: 50%;
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: rgb(10 14 26 / 70%);
+  font-size: 18px;
+  font-weight: 800;
+  transform: translateX(-50%);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+#toast[data-kind="warm"] {
+  color: var(--warn);
+}
+
+#toast[data-kind="good"] {
+  color: var(--ok);
+}
+
+#toast[data-kind="boost"] {
+  color: #7fd1ff;
+}
+
+#tip {
+  position: absolute;
+  right: 14px;
+  bottom: calc(150px + env(safe-area-inset-bottom));
+  left: 14px;
+  max-width: 440px;
+  margin: 0 auto;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgb(10 14 26 / 78%);
+  font-size: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  #tip {
+    bottom: 24px;
+  }
+}
+
+/* ---------- landscape phones ---------- */
+
+@media (max-height: 520px) and (orientation: landscape) {
+  .touch-left button {
+    width: 70px;
+    height: 70px;
+  }
+
+  .touch-right .large {
+    width: 84px;
+    height: 84px;
+  }
+
+  .touch-right .mid {
+    width: 64px;
+    height: 64px;
+  }
+
+  #touch {
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .hud-box {
+    padding: 5px 10px;
+  }
+
+  .hud-box span:first-child {
+    font-size: 15px;
+  }
+
+  #tip {
+    bottom: 12px;
+    max-width: 320px;
+    font-size: 12px;
+  }
+}
+
 /* ---------- touch controls ---------- */
 
 #touch {
@@ -145,29 +283,76 @@ input {
   pointer-events: none;
 }
 
+.touch-left {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+/* brake above drift, nitro tall on the right: fits 360px-wide phones */
+.touch-right {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: end;
+  gap: 8px 10px;
+}
+
 #touch button {
-  min-width: 88px;
-  height: 88px;
   border: 2px solid rgb(255 255 255 / 35%);
-  border-radius: 50%;
   background: rgb(10 14 26 / 55%);
   color: #fff;
-  font-size: 30px;
   font-weight: 700;
   touch-action: none;
   user-select: none;
+  -webkit-user-select: none;
   pointer-events: auto;
 }
 
-#touch button[data-touch="brake"] {
-  min-width: 96px;
-  height: 56px;
-  border-radius: 28px;
-  font-size: 16px;
+.touch-left button {
+  width: min(84px, 19vw);
+  height: min(84px, 19vw);
+  border-radius: 50%;
+  font-size: 28px;
+}
+
+.touch-right .small {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  width: min(66px, 17vw);
+  height: 40px;
+  border-radius: 20px;
+  font-size: 13px;
+}
+
+.touch-right .mid {
+  grid-column: 1;
+  grid-row: 2;
+  width: min(76px, 19vw);
+  height: min(76px, 19vw);
+  border-color: rgb(127 209 255 / 80%);
+  border-radius: 50%;
+  background: rgb(60 140 220 / 40%);
+  font-size: 15px;
+}
+
+.touch-right .large {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: min(100px, 24vw);
+  height: min(100px, 24vw);
+  border-color: rgb(255 170 60 / 80%);
+  border-radius: 50%;
+  background: rgb(255 120 40 / 45%);
+  font-size: 17px;
 }
 
 #touch button.pressed {
-  background: rgb(111 134 255 / 70%);
+  background: rgb(111 134 255 / 75%);
+}
+
+.touch-right .large.pressed {
+  background: rgb(255 150 50 / 85%);
 }
 
 /* ---------- screens ---------- */
