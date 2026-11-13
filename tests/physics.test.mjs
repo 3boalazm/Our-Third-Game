@@ -166,6 +166,16 @@ test("slipstream is strongest right behind a fast kart in line", () => {
   assert.equal(slow, 0, "a slow kart does not create a draft");
 });
 
+test("nitro requires strictly more than the 8 percent activation threshold", () => {
+  const kart = newKart(track);
+  kart.nitro = Physics.nitroStartMin;
+  stepKart(kart, { ...straight, nitro: true }, FixedStep, track, true);
+  assert.equal(kart.nitroOn, false, "exactly 8 percent should not activate nitro");
+  assert.ok(kart.nitro > Physics.nitroStartMin, "idle fuel should begin to refill");
+  stepKart(kart, { ...straight, nitro: true }, FixedStep, track, true);
+  assert.equal(kart.nitroOn, true, "nitro should activate once fuel is above 8 percent");
+});
+
 test("passive nitro regeneration is visible at the documented rate", () => {
   const kart = newKart(track);
   kart.nitro = 0;
