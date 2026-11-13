@@ -588,11 +588,11 @@ function showTip() {
   prefs.tipSeen = true;
   savePrefs();
   let text =
-    "Hold Shift while turning to drift, then release for nitro. Blue pads boost you, and tucking in behind a rival makes you faster.";
+    "Nitro starts at 30%. Hold Space to spend it; it slowly refills when unused. Drift through a corner, then release on the road for a faster refill. Blue pads are separate short boosts.";
   if (isTouchDevice) {
     text = prefs.steer === "tilt"
-      ? "Tilt to steer; turn hard to drift, then hold Nitro on the straights. Blue pads boost you, and tucking in behind a rival makes you faster."
-      : "Steer with the arrows; turn hard to drift, then hold Nitro on the straights. Blue pads boost you, and tucking in behind a rival makes you faster.";
+      ? "Nitro starts at 30%. Hold Nitro to spend it. Turn hard to slide, then straighten on the road to refill faster. Blue pads give a separate short boost."
+      : "Nitro starts at 30%. Hold Nitro to spend it. Hold Drift through a turn, then release on the road to refill faster. Blue pads give a separate short boost.";
   }
   tipEl.textContent = text;
   tipEl.hidden = false;
@@ -927,7 +927,7 @@ function handleKartEvents(kart) {
       );
     }
     if (mine) {
-      showToast("Pad boost!", "pad", 1000);
+      showToast("PAD BOOST · NO FUEL REFILL", "pad", 1200);
       audio.pad();
       vibrate(12);
       renderer.shake(2.5);
