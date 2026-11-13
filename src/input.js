@@ -377,7 +377,7 @@ export function resetInput() {
 
 // True when the steering comes from the phone's motion sensor right now.
 export function usingTilt() {
-  return isTouchDevice && controls.steer === "tilt" && tiltAlive();
+  return isTouchDevice && controls.steer === "tilt" && tiltAlive() && !tilt.recenterPending;
 }
 
 // dt is the fixed physics step, so steering feels the same at any frame rate.
