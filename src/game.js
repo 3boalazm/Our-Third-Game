@@ -38,6 +38,7 @@ export const Physics = {
   nitroAccel: 2.4,
   regenHuman: 0.015,
   regenBot: 0.045,
+  nitroPickupRespawn: 12, // seconds before the same kart can collect that canister again
 
   // Mini-boost after a good drift
   boostTop: 1.22,
@@ -106,6 +107,9 @@ export function makeKart({
     drafting: false, // in another kart's slipstream right now
     draft: 0, // 0..1 strength
     padCooldown: 0, // seconds until a boost pad can be used again
+    nitroPickupCooldowns: [],
+    nitroPickupHit: 0,
+    nitroPickupReward: 0,
     // lap timing
     lapsDone: 0,
     lapStart: 0, // race time when the current lap started
@@ -159,6 +163,9 @@ export function placeOnGrid(kart, track, slot) {
   kart.drafting = false;
   kart.draft = 0;
   kart.padCooldown = 0;
+  kart.nitroPickupCooldowns = [];
+  kart.nitroPickupHit = 0;
+  kart.nitroPickupReward = 0;
   kart.lapsDone = 0;
   kart.lapStart = 0;
   kart.lapTimes = [];
@@ -209,6 +216,9 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
   const by = fy;
   const onRoad = kart.dist <= track.halfWidth;
   kart.padCooldown = Math.max(0, kart.padCooldown - dt);
+  for (let i = 0; i < (track.nitroPickups ?? []).length; i += 1) {
+    kart.nitroPickupCooldowns[i] = Math.max(0, (kart.nitroPickupCooldowns[i] ?? 0) - dt);
+  }
 
   // --- slipstream ---
   const draft = canDrive && onRoad ? slipstream(kart, others) : 0;
@@ -317,6 +327,22 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
     }
   }
   kart.offRoad = kart.dist > track.halfWidth;
+
+  // --- collectible nitro canisters ---
+  if (canDrive && !kart.offRoad && kart.nitro < 1) {
+    for (let i = 0; i < (track.nitroPickups ?? []).length; i += 1) {
+      const pickup = track.nitroPickups[i];
+      if ((kart.nitroPickupCooldowns[i] ?? 0) > 0) continue;
+      const distance = Math.hypot(kart.x - pickup.x, kart.y - pickup.y);
+      if (distance > (pickup.radius ?? 34) + 18) continue;
+      const before = kart.nitro;
+      kart.nitro = Math.min(1, kart.nitro + (pickup.amount ?? 0.35));
+      kart.nitroPickupReward = kart.nitro - before;
+      kart.nitroPickupHit = 1;
+      kart.nitroPickupCooldowns[i] = P.nitroPickupRespawn;
+      break;
+    }
+  }
 
   // --- boost pads ---
   if (canDrive && kart.padCooldown <= 0 && along > P.padMinSpeed) {

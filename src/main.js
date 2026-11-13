@@ -589,11 +589,11 @@ function showTip() {
   prefs.tipSeen = true;
   savePrefs();
   let text =
-    "Nitro starts at 30%. Hold Space to spend it; it slowly refills when unused. Drift through a corner, then release on the road for a faster refill. Blue pads are separate short boosts.";
+    "Nitro starts at 30%. Collect glowing NITRO canisters on the road for +35% fuel. Hold Space to boost; clean drifts refill faster, and blue chevrons give a separate short burst.";
   if (isTouchDevice) {
     text = prefs.steer === "tilt"
-      ? "Nitro starts at 30%. Hold Nitro to spend it. Turn hard to slide, then straighten on the road to refill faster. Blue pads give a separate short boost."
-      : "Nitro starts at 30%. Hold Nitro to spend it. Hold Drift through a turn, then release on the road to refill faster. Blue pads give a separate short boost.";
+      ? "Collect glowing NITRO canisters on the road for +35% fuel. Hold Nitro to boost; turn hard to drift, then straighten for a refill. Blue pads give a separate short burst."
+      : "Collect glowing NITRO canisters on the road for +35% fuel. Hold Nitro to boost; drift through a turn, then release for a refill. Blue pads give a separate short burst.";
   }
   tipEl.textContent = text;
   tipEl.hidden = false;
@@ -935,6 +935,29 @@ function handleKartEvents(kart) {
     }
     kart.padHit = 0;
   }
+  if (kart.nitroPickupHit) {
+    if (mine) {
+      const gain = Math.round((kart.nitroPickupReward ?? 0) * 100);
+      for (let i = 0; i < 18; i += 1) {
+        fx.emit(
+          "spark",
+          kart.x,
+          kart.y,
+          rand(280),
+          rand(280),
+          0.48,
+          4,
+          i % 2 === 0 ? "#9ceeff" : "#ffffff",
+        );
+      }
+      showToast(gain > 0 ? `NITRO CANISTER +${gain}%` : "NITRO REFILLED", "good", 1450);
+      audio.boost();
+      vibrate(28);
+      renderer.shake(3);
+    }
+    kart.nitroPickupHit = 0;
+    kart.nitroPickupReward = 0;
+  }
   if (kart.driftReward > 0) {
     if (mine) {
       const gain = Math.round((kart.driftNitroReward ?? 0) * 100);
@@ -1008,6 +1031,8 @@ function update(dt, now) {
       if (tick % 3 === 0) emitEffects(kart);
       kart.hit = 0;
       kart.driftReward = 0;
+      kart.nitroPickupHit = 0;
+      kart.nitroPickupReward = 0;
     }
     resolveContacts(karts);
     for (const kart of karts) kart.bump = 0;

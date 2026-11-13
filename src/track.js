@@ -105,6 +105,46 @@ function buildPads(samples, N, halfWidth) {
   return pads;
 }
 
+// Three collectible nitro canisters per lap. They sit in alternating lanes on
+// relatively straight sections, separate from the timed boost pads.
+const NitroPickupFractions = [0.30, 0.62, 0.91];
+
+function buildNitroPickups(samples, N, halfWidth) {
+  const pickups = [];
+  const span = 18;
+  const reach = Math.round(N * 0.035);
+  for (let index = 0; index < NitroPickupFractions.length; index += 1) {
+    const base = Math.round(NitroPickupFractions[index] * N);
+    let bestIdx = base;
+    let bestScore = -Infinity;
+    for (let offset = -reach; offset <= reach; offset += 2) {
+      const i = (base + offset + N) % N;
+      const a = samples[(i - span + N) % N];
+      const b = samples[(i + span) % N];
+      const alignment = a.tx * b.tx + a.ty * b.ty;
+      const score = alignment - Math.abs(offset) / N;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+    const s = samples[bestIdx];
+    const lane = index % 2 === 0 ? -1 : 1;
+    const offset = lane * halfWidth * 0.28;
+    pickups.push({
+      id: `nitro-${index + 1}`,
+      idx: bestIdx,
+      x: s.x - s.ty * offset,
+      y: s.y + s.tx * offset,
+      tx: s.tx,
+      ty: s.ty,
+      radius: 38,
+      amount: 0.35,
+    });
+  }
+  return pickups;
+}
+
 // Evenly spaced points along a closed polyline.
 function resample(poly, spacing) {
   const n = poly.length;
@@ -205,6 +245,7 @@ export function buildTrack(def) {
     length,
     halfWidth: def.width / 2,
     pads: buildPads(samples, N, def.width / 2),
+    nitroPickups: buildNitroPickups(samples, N, def.width / 2),
     bounds: { minX, minY, maxX, maxY },
     path,
   };

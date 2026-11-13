@@ -12,7 +12,7 @@ export function createRenderer(canvas) {
   // "chase": the camera sits behind the kart, so the road ahead always runs up the
   // screen. "fixed": the map stays put and the kart turns on it.
   let cameraMode = "chase";
-  const AheadWorld = 640; // road (in world pixels) we want to see in front of the kart
+  const AheadWorld = 820; // keep a longer stretch of road visible in the chase view
   const cam = { x: 0, y: 0, zoom: 1, angle: 0, ready: false };
   const particles = createParticles();
   let width = 0;
@@ -135,6 +135,25 @@ export function createRenderer(canvas) {
     ctx.stroke(track.path);
     ctx.setLineDash([]);
 
+    // Thin painted edge guides make the drivable width easier to read at speed.
+    ctx.strokeStyle = "rgba(234, 246, 255, 0.62)";
+    ctx.lineWidth = 4;
+    ctx.setLineDash([24, 20]);
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      for (let i = 0; i < track.N; i += 1) {
+        const s = track.samples[i];
+        const offset = side * (track.halfWidth - 17);
+        const x = s.x - s.ty * offset;
+        const y = s.y + s.tx * offset;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
     // start / finish line
     const s = track.samples[0];
     ctx.save();
@@ -178,6 +197,67 @@ export function createRenderer(canvas) {
         ctx.lineTo(x - 12, pad.half * 0.55);
         ctx.stroke();
       }
+      ctx.restore();
+    }
+  }
+
+  // Collectible fuel canisters are deliberately different from the flat blue
+  // boost strips: these refill the actual nitro tank when the kart drives through.
+  function drawNitroPickups(track, me) {
+    for (let i = 0; i < (track.nitroPickups ?? []).length; i += 1) {
+      const pickup = track.nitroPickups[i];
+      if ((me?.nitroPickupCooldowns?.[i] ?? 0) > 0) continue;
+      const pulse = 0.72 + 0.28 * Math.sin(clock * 4.6 + pickup.idx);
+      const bob = Math.sin(clock * 3.2 + pickup.idx) * 3;
+      ctx.save();
+      ctx.translate(pickup.x, pickup.y + bob);
+      ctx.rotate(Math.atan2(pickup.ty, pickup.tx));
+
+      ctx.globalAlpha = pulse;
+      ctx.shadowColor = "rgba(58, 211, 255, .95)";
+      ctx.shadowBlur = 24;
+      ctx.fillStyle = "rgba(47, 185, 235, .2)";
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 31, 31, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      ctx.strokeStyle = "rgba(145, 239, 255, .92)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, 26, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(4, 24, 39, .9)";
+      ctx.beginPath();
+      ctx.roundRect(-15, -21, 30, 42, 8);
+      ctx.fill();
+      ctx.strokeStyle = "#9ceeff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = "#39c9f3";
+      ctx.beginPath();
+      ctx.roundRect(-8, -26, 16, 8, 3);
+      ctx.fill();
+      ctx.fillStyle = "#d9fbff";
+      ctx.beginPath();
+      ctx.moveTo(3, -15);
+      ctx.lineTo(-6, 1);
+      ctx.lineTo(0, 1);
+      ctx.lineTo(-3, 14);
+      ctx.lineTo(8, -3);
+      ctx.lineTo(2, -3);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "#e7fbff";
+      ctx.font = "900 11px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.shadowColor = "rgba(0, 0, 0, .75)";
+      ctx.shadowBlur = 4;
+      ctx.fillText("+35%", 0, 39);
       ctx.restore();
     }
   }
@@ -352,6 +432,18 @@ export function createRenderer(canvas) {
       ctx.arc(p.x, p.y, 2.6 / k, 0, Math.PI * 2);
       ctx.fill();
     }
+    // collectible nitro canisters
+    ctx.fillStyle = "#8ceeff";
+    ctx.strokeStyle = "rgba(7, 36, 54, .9)";
+    ctx.lineWidth = 1.5 / k;
+    for (let i = 0; i < (track.nitroPickups ?? []).length; i += 1) {
+      if ((me?.nitroPickupCooldowns?.[i] ?? 0) > 0) continue;
+      const pickup = track.nitroPickups[i];
+      ctx.beginPath();
+      ctx.arc(pickup.x, pickup.y, 4.2 / k, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
     // start line
     const s = track.samples[0];
     ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
@@ -476,9 +568,14 @@ export function createRenderer(canvas) {
     clock += dt;
     const focus = me ?? karts[0];
     const chase = photo ? true : cameraMode === "chase";
+    // Lead the camera ahead of the kart as speed rises. This moves the kart
+    // toward the bottom of the screen and gives the player more time to read turns.
+    const lookAhead = chase && !photo ? Math.min(88, Math.max(0, focus.speed * 0.16)) : 0;
+    const targetX = focus.x + Math.cos(focus.a) * lookAhead;
+    const targetY = focus.y + Math.sin(focus.a) * lookAhead;
     if (!cam.ready) {
-      cam.x = focus.x;
-      cam.y = focus.y;
+      cam.x = targetX;
+      cam.y = targetY;
       cam.angle = focus.a;
       cam.ready = true;
     }
@@ -490,26 +587,25 @@ export function createRenderer(canvas) {
       cam.angle += angleDiff(focus.a + (photo.orbit ?? 0), cam.angle) * follow;
       cam.zoom += ((photo.zoom ?? 1.35) - cam.zoom) * follow;
     } else {
-      const follow = Math.min(1, dt * (chase ? 10 : 7));
-      cam.x += (focus.x - cam.x) * follow;
-      cam.y += (focus.y - cam.y) * follow;
+      const follow = Math.min(1, dt * (chase ? 7 : 7));
+      cam.x += (targetX - cam.x) * follow;
+      cam.y += (targetY - cam.y) * follow;
       if (chase) {
-        cam.angle += angleDiff(focus.a, cam.angle) * Math.min(1, dt * 6);
+        cam.angle += angleDiff(focus.a, cam.angle) * Math.min(1, dt * 5.5);
       } else {
         cam.angle = focus.a; // so switching to the chase camera starts from the right angle
       }
-      // zoom out a little at speed so you can see further ahead
+      // Zoom out at speed to keep a longer braking / cornering window in view.
       const zoomTarget = 1 - 0.16 * Math.min(1, focus.speed / Physics.maxSpeed);
       cam.zoom += (zoomTarget - cam.zoom) * Math.min(1, dt * 2);
     }
     let fit = Math.max(0.35, Math.min(width, height) / 760) * 1.14;
-    // On a short (landscape) screen the kart sits low and only ~70% of the height is
-    // road ahead: zoom out enough to still see a good stretch of it.
+    // Keep extra road in view for the speed-based chase-camera lead.
     if (chase) {
-      fit = Math.min(fit, (0.72 * height) / AheadWorld);
+      fit = Math.min(fit, (0.74 * height) / AheadWorld);
     }
     const scale = fit * cam.zoom;
-    const anchorY = chase ? (photo ? height / 2 : height * 0.72) : height / 2;
+    const anchorY = chase ? (photo ? height / 2 : height * 0.70) : height / 2;
 
     shakeAmount *= Math.exp(-9 * dt);
     const shakeX = shakeAmount > 0.2 ? (Math.random() - 0.5) * shakeAmount : 0;
@@ -549,6 +645,7 @@ export function createRenderer(canvas) {
     ctx.drawImage(world.canvas, world.x, world.y, world.w, world.h);
     drawTrack(track);
     drawPads(track);
+    drawNitroPickups(track, me);
     rememberMarks(karts);
     drawMarks();
 
