@@ -1,4 +1,5 @@
 import "./styles.css";
+import "./menu.css";
 import { Tracks, buildTrack, trackById } from "./track.js";
 import {
   FixedStep,
@@ -487,6 +488,7 @@ let padRemap = null;
 let padRemapRender = null;
 
 let lastInput = { gas: false };
+let previousHudRank = 0;
 let toastText = "";
 let toastKind = "boost";
 let toastUntil = 0;
@@ -523,6 +525,7 @@ function startRace({ trackId, laps, kartsSpec, mode = "race", weather = prefs.we
   hidePause();
   paused = false;
   resetInput();
+  previousHudRank = 0;
   renderer.particles.clear();
   screen.replaceChildren();
   const t = track(trackId);
@@ -1099,6 +1102,10 @@ function updateHud() {
   }
   const lap = Math.max(1, Math.min(world.laps, Math.floor(me.progress / world.track.N) + 1));
   const rank = standings().indexOf(me) + 1;
+  if (previousHudRank && rank < previousHudRank && world.mode !== "trial") {
+    showToast(`OVERTAKE! ${ordinal(rank)} PLACE`, "good", 950);
+  }
+  previousHudRank = rank;
   setText("lap", hud.lap, `Lap ${lap}/${world.laps}`);
   setText(
     "pos",
@@ -1302,57 +1309,125 @@ function showMenu() {
   startDemo(prefs.track);
 
   const element = card(`
-    <h1>Kart Race</h1>
-    <p class="sub">Drive fast, stay on the road, beat your friends.</p>
-    <button type="button" class="install" data-act="install" hidden>
-      <strong>Install the app</strong><span>Fullscreen, opens from your home screen, works offline</span>
-    </button>
-    <div class="group">
-      <span class="label">Track</span>
-      <div data-slot="track"></div>
-      <p class="record" data-slot="record"></p>
+    <div class="menu-shell">
+      <header class="menu-topbar">
+        <div class="brand-lockup"><span class="brand-mark">K</span><span class="brand-copy"><small>ARCADE MOTORSPORT</small><strong>KART RACE</strong></span></div>
+        <nav class="menu-nav" aria-label="Main navigation">
+          <button type="button" class="menu-tab active" data-menu-page="home"><span>01</span> Home</button>
+          <button type="button" class="menu-tab" data-menu-page="tracks"><span>02</span> Tracks</button>
+          <button type="button" class="menu-tab" data-menu-page="garage"><span>03</span> Garage</button>
+          <button type="button" class="menu-tab" data-menu-page="records"><span>04</span> Records</button>
+          <button type="button" class="menu-tab" data-menu-page="settings"><span>05</span> Settings</button>
+        </nav>
+        <div class="menu-top-actions"><span class="menu-online-indicator"><i></i> READY TO RACE</span><button type="button" class="menu-install" data-act="install" hidden>Install app ↗</button></div>
+      </header>
+      <main class="menu-pages">
+        <section class="menu-page active" data-menu-screen="home">
+          <div class="home-layout">
+            <section class="menu-hero" data-role="menu-hero" data-track="sunny">
+              <div class="hero-topline"><span class="eyebrow">YOUR NEXT RACE STARTS HERE</span><span class="hero-season">NO. 001 <b>—</b> OPEN CIRCUIT</span></div>
+              <div class="hero-copy">
+                <span class="hero-kicker">PUSH YOUR LIMITS</span><h1>READY<br><em>TO RACE?</em></h1>
+                <p>Pick your line. Hit the boost. Own the track.</p>
+                <div class="hero-selected-track"><span class="track-pin"></span><span data-role="hero-track">Sunny Loop</span><span class="hero-separator">/</span><span data-role="hero-meta">3 LAPS · NORMAL · CLEAR</span></div>
+                <button type="button" class="hero-cta" data-act="solo"><span>START RACING</span><b>↗</b></button>
+                <div class="hero-secondary-actions">
+                  <button type="button" data-act="trial"><span class="action-icon">◷</span><span><strong>TIME TRIAL</strong><small data-role="trial-sub">Set a lap. Chase your ghost.</small></span><b>→</b></button>
+                  <button type="button" data-act="online"><span class="action-icon">◎</span><span><strong>RACE A FRIEND</strong><small>Challenge someone online.</small></span><b>→</b></button>
+                </div>
+              </div>
+              <div class="hero-track-stamp"><span>TRACK</span><strong data-role="hero-track-stamp">SUNNY LOOP</strong><i>01 / 03</i></div>
+              <div class="hero-bottom-line"><span>ARCADE RACING EXPERIENCE</span><span>DRIFT · BOOST · REPEAT</span></div>
+            </section>
+            <aside class="home-sidebar">
+              <section class="menu-side-card daily-side-card"><div class="side-card-heading"><span class="eyebrow">FRESH EVERY DAY</span><span class="side-live">LIVE</span></div><h2>DAILY<br>CHALLENGE</h2><p>One lap. One target. Make it count.</p><div data-slot="daily"></div></section>
+              <section class="menu-side-card track-side-card"><div class="side-card-heading"><span class="eyebrow">CURRENT CIRCUIT</span><span class="side-index">01 / 03</span></div><strong data-role="track-preview-name">Sunny Loop</strong><p data-slot="record" class="record"></p><button type="button" class="text-action" data-menu-page="tracks">EXPLORE TRACKS <b>↗</b></button></section>
+              <section class="menu-side-card garage-side-card"><div class="garage-side-mark">✳</div><div><span class="eyebrow">MAKE IT YOURS</span><strong>YOUR KART</strong><small>Colour · livery · identity</small></div><button type="button" class="round-arrow" data-menu-page="garage" aria-label="Open garage">↗</button></section>
+            </aside>
+          </div>
+          <div class="home-footer-stats"><span><b>03</b> UNIQUE TRACKS</span><span><b>06</b> KART COLOURS</span><span><b>∞</b> PERSONAL BESTS TO BEAT</span><span class="profile-progress" data-role="profile-stats">0 / 3 TRACK RECORDS SET</span></div>
+        </section>
+        <section class="menu-page" data-menu-screen="tracks" hidden>
+          <div class="page-heading"><div><span class="eyebrow">CHOOSE YOUR BATTLEFIELD</span><h1>THE TRACKS</h1><p>Every circuit has its own rhythm. Find yours.</p></div><span class="page-index">02 <i>/</i> 05</span></div>
+          <div class="tracks-layout">
+            <section class="menu-panel track-picker-panel"><div class="panel-heading"><span>01 / SELECT CIRCUIT</span><span>3 CIRCUITS AVAILABLE</span></div><div data-slot="track" class="track-choice-slot"></div><div class="selected-track-record"><span class="eyebrow">YOUR PERSONAL BEST</span><p data-role="track-record-summary">No lap record yet. Set your first time.</p></div></section>
+            <section class="menu-panel race-setup-panel"><div class="panel-heading"><span>02 / RACE SETUP</span><span>MAKE IT YOUR RACE</span></div>
+              <div class="setup-field"><span class="field-label">LAPS</span><div data-slot="laps"></div></div>
+              <div class="setup-field"><span class="field-label">RIVAL DIFFICULTY</span><div data-slot="difficulty"></div></div>
+              <div class="setup-field"><span class="field-label">WEATHER CONDITIONS</span><div data-slot="weather"></div></div>
+              <div class="setup-note"><span>✦</span><p>Rain reduces grip and top speed. Night racing changes the atmosphere. Choose your conditions before you hit the grid.</p></div>
+              <button type="button" class="panel-primary-action" data-act="solo">RACE THIS SETUP <b>↗</b></button>
+            </section>
+          </div>
+        </section>
+        <section class="menu-page" data-menu-screen="garage" hidden>
+          <div class="page-heading"><div><span class="eyebrow">YOUR MACHINE. YOUR STYLE.</span><h1>THE GARAGE</h1><p>Build a kart that looks as fast as it drives.</p></div><span class="page-index">03 <i>/</i> 05</span></div>
+          <div class="garage-layout">
+            <section class="garage-showcase"><span class="eyebrow">PLAYER KART · CUSTOM BUILD</span>
+              <div class="garage-kart-symbol" data-role="garage-kart" data-livery="stripe">
+                <svg viewBox="0 0 420 260" role="img" aria-label="Your kart preview">
+                  <ellipse cx="210" cy="143" rx="164" ry="86" fill="rgba(0,0,0,.35)"/>
+                  <g fill="#080d15" stroke="rgba(220,235,255,.22)" stroke-width="4">
+                    <rect x="71" y="62" width="70" height="52" rx="17"/><rect x="279" y="62" width="70" height="52" rx="17"/>
+                    <rect x="71" y="162" width="70" height="52" rx="17"/><rect x="279" y="162" width="70" height="52" rx="17"/>
+                  </g>
+                  <path d="M210 25 C174 25 157 55 148 82 L118 111 Q104 125 118 146 L144 181 Q155 220 210 229 Q265 220 276 181 L302 146 Q316 125 302 111 L272 82 C263 55 246 25 210 25Z" fill="var(--kart-color,#5d91ef)" stroke="rgba(235,245,255,.8)" stroke-width="5"/>
+                  <path d="M174 91 Q210 67 246 91 L258 137 Q210 153 162 137Z" fill="#101a2a" stroke="rgba(230,241,255,.35)" stroke-width="4"/>
+                  <path class="kart-stripe kart-stripe-main" d="M203 34 L217 34 L230 86 L210 91 L190 86Z" fill="#f3f7ff" opacity=".92"/>
+                  <path class="kart-stripe kart-stripe-side" d="M157 111 L170 108 L184 178 L170 180Z" fill="#f3f7ff" opacity=".8"/>
+                  <path d="M181 188 Q210 202 239 188" fill="none" stroke="rgba(255,255,255,.6)" stroke-width="5" stroke-linecap="round"/>
+                  <circle cx="210" cy="177" r="12" fill="#0b1422" stroke="rgba(255,255,255,.65)" stroke-width="3"/>
+                </svg>
+              </div>
+              <div class="showcase-caption"><span>YOUR CURRENT BUILD</span><strong data-role="garage-colour-name">BLUE / RACING STRIPE</strong></div>
+            </section>
+            <section class="menu-panel garage-options"><div class="panel-heading"><span>01 / BODY COLOUR</span><span>6 FINISHES</span></div><div data-slot="color"></div><div class="garage-divider"></div><div class="panel-heading"><span>02 / LIVERY</span><span>3 DESIGNS</span></div><div data-slot="livery"></div><div class="garage-tip"><span>✦</span> Your kart is saved automatically and will be ready on the starting grid.</div><button type="button" class="panel-primary-action" data-menu-page="home">BACK TO HOME <b>↗</b></button></section>
+          </div>
+        </section>
+        <section class="menu-page" data-menu-screen="records" hidden>
+          <div class="page-heading"><div><span class="eyebrow">THE CLOCK NEVER LIES</span><h1>YOUR RECORDS</h1><p>Every lap is a new chance to beat your best.</p></div><span class="page-index">04 <i>/</i> 05</span></div>
+          <div class="records-summary"><div><span class="eyebrow">TRACKS MASTERED</span><strong data-role="records-count">0/3</strong></div><div><span class="eyebrow">GOLD MEDALS</span><strong data-role="gold-count">0</strong></div><div><span class="eyebrow">PERSONAL BESTS</span><strong data-role="best-count">0</strong></div></div>
+          <div class="records-grid" data-slot="records"></div>
+        </section>
+        <section class="menu-page" data-menu-screen="settings" hidden>
+          <div class="page-heading"><div><span class="eyebrow">MAKE YOURSELF COMFORTABLE</span><h1>SETTINGS</h1><p>Fine-tune the way you play.</p></div><span class="page-index">05 <i>/</i> 05</span></div>
+          <div class="settings-layout">
+            <section class="menu-panel"><div class="panel-heading"><span>CONTROLLER SETUP</span><span>GAMEPAD</span></div><p class="settings-intro">Connect a controller, then select an action and press the button you want to assign.</p><div data-slot="pad"></div></section>
+            ${isTouchDevice ? `<section class="menu-panel mobile-settings"><div class="panel-heading"><span>TOUCH & MOTION</span><span>MOBILE</span></div>
+              <div class="setup-field"><span class="field-label">STEERING</span><div data-slot="steer"></div></div>
+              <div class="setup-field" data-tilt-only><span class="field-label">TILT SENSITIVITY</span><div data-slot="sens"></div></div>
+              <div class="setup-field" data-tilt-only><span class="field-label">TILT DIRECTION</span><div data-slot="flip"></div></div>
+              <div class="setup-field"><span class="field-label">DRIFT</span><div data-slot="drift"></div></div>
+              <div class="setup-field"><span class="field-label">CAMERA</span><div data-slot="camera"></div></div>
+              <div class="setup-field"><span class="field-label">SCREEN ORIENTATION</span><div data-slot="screen"></div></div>
+              <div class="setup-field"><span class="field-label">FULLSCREEN</span><div data-slot="fullscreen"></div></div>
+            </section>` : ""}
+            <section class="menu-panel controls-guide"><div class="panel-heading"><span>QUICK CONTROLS</span><span>HOW TO PLAY</span></div>
+              <div class="control-guide-row"><kbd>WASD</kbd><span>Steer and accelerate</span></div><div class="control-guide-row"><kbd>SHIFT</kbd><span>Hold while turning to drift</span></div><div class="control-guide-row"><kbd>SPACE</kbd><span>Fire your nitro boost</span></div><div class="control-guide-row"><kbd>P / ESC</kbd><span>Pause the race</span></div><div class="control-guide-row"><kbd>C</kbd><span>Switch camera mode</span></div>
+              <p class="settings-intro">A clean drift charges your nitro. Blue pads give you a free boost, and following a rival closely creates a slipstream.</p>
+            </section>
+          </div>
+        </section>
+      </main>
+      <footer class="menu-footer"><span>KART RACE <i>·</i> BUILT FOR THE NEXT LAP</span><a href="check.html">CONNECTION CHECK ↗</a><span>ARCADE MOTORSPORT SYSTEMS</span></footer>
     </div>
-    <div class="daily" data-slot="daily"></div>
-    <div class="group"><span class="label">Laps</span><div data-slot="laps"></div></div>
-    <div class="group"><span class="label">Rivals</span><div data-slot="difficulty"></div></div>
-    <div class="group"><span class="label">Weather</span><div data-slot="weather"></div></div>
-    <div class="group"><span class="label">Your kart</span><div data-slot="color"></div></div>
-    <div class="group"><span class="label">Livery</span><div data-slot="livery"></div></div>
-    <button type="button" class="big primary" data-act="solo"><strong>Race against bots</strong><span>3 bots, one lap or more</span></button>
-    <button type="button" class="big" data-act="trial"><strong>Time trial</strong><span data-role="trial-sub"></span></button>
-    <button type="button" class="big" data-act="online"><strong>Race a friend online</strong><span>Get an invite link, play from anywhere</span></button>
-    <details class="settings">
-      <summary>Gamepad</summary>
-      <div class="group">
-        <span class="label">Buttons <small>(click one, then press a button on the pad)</small></span>
-        <div data-slot="pad"></div>
-      </div>
-    </details>
-    ${
-      isTouchDevice
-        ? `<details class="settings">
-        <summary>Controls</summary>
-        <div class="group"><span class="label">Steering</span><div data-slot="steer"></div></div>
-        <div class="group" data-tilt-only><span class="label">Tilt sensitivity <small>(higher = turns with less tilt)</small></span><div data-slot="sens"></div></div>
-        <div class="group" data-tilt-only><span class="label">Tilt direction</span><div data-slot="flip"></div></div>
-        <div class="group"><span class="label">Drift</span><div data-slot="drift"></div></div>
-        <div class="group"><span class="label">Camera</span><div data-slot="camera"></div></div>
-        <div class="group"><span class="label">Screen <small>(Landscape turns the game sideways by itself, even if your phone is locked upright)</small></span><div data-slot="screen"></div></div>
-        <div class="group"><span class="label">Fullscreen</span><div data-slot="fullscreen"></div></div>
-      </details>`
-        : ""
-    }
-    <p class="hint">${
-      isTouchDevice
-        ? "Tilt to steer; the kart accelerates itself. Turn hard to drift, hold Nitro on straights, and run over the blue pads for a free boost."
-        : "Arrows/WASD drive, Shift drifts, Space is nitro, P pauses, C switches the camera. Blue pads give a free boost, and tucking in behind a rival makes you faster."
-    }${
-      gamepadAvailable()
-        ? " Gamepad: left stick steers, RT/A gas, LT/B brake, X drifts, Y fires nitro."
-        : ""
-    }</p>
-    <a class="footer" href="check.html">Connection check</a>
   `);
+  element.classList.add("menu-card");
+  const activateMenuPage = (page) => {
+    element.querySelectorAll("[data-menu-screen]").forEach((section) => {
+      const active = section.dataset.menuScreen === page;
+      section.hidden = !active;
+      section.classList.toggle("active", active);
+    });
+    element.querySelectorAll("[data-menu-page]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.menuPage === page);
+      if (button.matches(".menu-tab")) button.setAttribute("aria-current", button.dataset.menuPage === page ? "page" : "false");
+    });
+    if (page === "records") renderRecords();
+  };
+  element.querySelectorAll("[data-menu-page]").forEach((button) => {
+    button.addEventListener("click", () => activateMenuPage(button.dataset.menuPage));
+  });
   const recordLine = element.querySelector('[data-slot="record"]');
   const renderRecord = () => {
     const built = track(prefs.track);
@@ -1374,6 +1449,41 @@ function showMenu() {
       target.textContent = `${goal.tier[0].toUpperCase()}${goal.tier.slice(1)} under ${formatTime(goal.time)}`;
       recordLine.append(target);
     }
+  };
+
+  const recordsSlot = element.querySelector('[data-slot="records"]');
+  const renderRecords = () => {
+    if (!recordsSlot) return;
+    const rows = Tracks.map((trackDef) => {
+      const built = track(trackDef.id);
+      const best = recordFor(trackDef.id);
+      return { trackDef, best, medal: best ? medalForLap(built, best) : null, next: nextMedal(built, best) };
+    });
+    const mastered = rows.filter((row) => row.best).length;
+    const golds = rows.filter((row) => row.medal === "gold").length;
+    element.querySelector('[data-role="records-count"]').textContent = `${mastered}/3`;
+    element.querySelector('[data-role="gold-count"]').textContent = String(golds);
+    element.querySelector('[data-role="best-count"]').textContent = String(mastered);
+    element.querySelector('[data-role="profile-stats"]').textContent = `${mastered} / 3 TRACK RECORDS SET`;
+    recordsSlot.replaceChildren(...rows.map(({ trackDef, best, medal, next }, index) => {
+      const card = document.createElement("article");
+      card.className = `record-track-card track-${trackDef.id}`;
+      const top = document.createElement("div"); top.className = "record-track-top";
+      const number = document.createElement("span"); number.textContent = `0${index+1}`;
+      const badge = document.createElement("span"); badge.className = medal ? `record-medal ${medal}` : "record-medal empty";
+      badge.textContent = medal ? medal.toUpperCase() : "NO MEDAL";
+      top.append(number,badge);
+      const name = document.createElement("h2"); name.textContent = trackDef.name;
+      const bestLine = document.createElement("p"); bestLine.className = "record-best-time"; bestLine.textContent = best ? formatTime(best) : "--:--.---";
+      const note = document.createElement("p"); note.className = "record-next-goal";
+      note.textContent = next ? `NEXT: ${next.tier.toUpperCase()} UNDER ${formatTime(next.time)}` : "GOLD MEDAL EARNED";
+      const action = document.createElement("button"); action.type = "button"; action.className = "record-race-action";
+      action.textContent = best ? "BEAT THIS TIME ↗" : "SET A RECORD ↗";
+      action.addEventListener("click", () => {
+        prefs.track = trackDef.id; savePrefs(); startDemo(trackDef.id); activateMenuPage("tracks"); renderChoices();
+      });
+      card.append(top,name,bestLine,note,action); return card;
+    }));
   };
 
   const dailySlot = element.querySelector('[data-slot="daily"]');
@@ -1527,6 +1637,21 @@ function showMenu() {
     element.querySelector('[data-role="trial-sub"]').textContent = ghost
       ? `Race your ghost · ${formatTime(ghost.time)}`
       : "No rivals. Set a lap to make a ghost.";
+    const selectedTrack = trackById(prefs.track);
+    element.querySelector('[data-role="hero-track"]').textContent = selectedTrack.name;
+    element.querySelector('[data-role="hero-track-stamp"]').textContent = selectedTrack.name.toUpperCase();
+    element.querySelector('[data-role="track-preview-name"]').textContent = selectedTrack.name;
+    element.querySelector('[data-role="menu-hero"]').dataset.track = selectedTrack.id;
+    element.querySelector('[data-role="hero-meta"]').textContent = `${prefs.laps} LAPS · ${prefs.difficulty.toUpperCase()} · ${WeatherOptions.find((item) => item.id === prefs.weather)?.label.toUpperCase() ?? "CLEAR"}`;
+    const best = recordFor(prefs.track);
+    element.querySelector('[data-role="track-record-summary"]').textContent = best
+      ? `${formatTime(best)} · ${medalForLap(track(prefs.track), best)?.toUpperCase() ?? "PERSONAL BEST"}`
+      : "No lap record yet. Set your first time.";
+    element.querySelector('[data-role="garage-colour-name"]').textContent = `${ColorNames[KartColors.indexOf(prefs.color)] ?? "CUSTOM"} / ${prefs.livery.toUpperCase()}`;
+    const garageKart = element.querySelector('[data-role="garage-kart"]');
+    garageKart.style.setProperty("--kart-color", prefs.color);
+    garageKart.dataset.livery = prefs.livery;
+    renderRecords();
   };
   renderChoices();
   if (isTouchDevice) {
@@ -1622,11 +1747,13 @@ function showMenu() {
   };
   refreshInstall();
   installButton.addEventListener("click", installApp);
-  element.querySelector('[data-act="solo"]').addEventListener("click", () => {
-    if (isTouchDevice && prefs.steer === "tilt") enableTilt();
-    userLeftFullscreen = false;
-    startImmersive();
-    startSolo();
+  element.querySelectorAll('[data-act="solo"]').forEach((button) => {
+    button.addEventListener("click", () => {
+      if (isTouchDevice && prefs.steer === "tilt") enableTilt();
+      userLeftFullscreen = false;
+      startImmersive();
+      startSolo();
+    });
   });
   element.querySelector('[data-act="trial"]').addEventListener("click", () => {
     if (isTouchDevice && prefs.steer === "tilt") enableTilt();
