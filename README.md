@@ -3,7 +3,7 @@
 A small top-down kart racing game for the browser. Race three bots on your own, or race a friend online from anywhere (phone or computer).
 
 - Three tracks (Sunny Loop, Twisty Hills, Sunset Ridge), each with its own scenery and grass tones, 1 / 3 / 5 laps and Easy / Normal / Hard rivals. Wide roads (about 290 px) with gentle bends: `npm test` fails if any bend is tighter than 250 px
-- **Boost pads:** three per lap, on the straights. Drive over the blue chevrons for a free, short boost (the bots use them too)
+- **Boost pads:** three per lap, on the straights. Drive over the blue chevrons for a free 1.05-second burst; this is separate from the nitro tank and does not refill it (the bots use them too)
 - **Slipstream:** tuck in right behind a rival for extra acceleration and top speed. A small "Slipstream" tag appears in the HUD while it is working
 - **Contact:** karts rub and bump instead of driving through each other. A hit costs a little speed and throws a few sparks; your friend's kart only ever pushes you, it never moves on your screen
 - **Time trial and ghost:** race alone against the clock. Your fastest lap is saved as a translucent ghost that you can chase on the next attempt, and the menu shows which ghost time you are up against
@@ -18,8 +18,8 @@ A small top-down kart racing game for the browser. Race three bots on your own, 
 - **Camera:** by default the camera sits behind the kart, so the road ahead always runs up the screen (also in landscape). "Fixed map" (Controls or the Pause menu, or the C key) keeps the map still instead
 - Keyboard: arrows or WASD drive, Down/S brake, **Shift** drift, **Space** nitro, P or Esc pause
 - Phone: the kart accelerates by itself and you **tilt the phone like a steering wheel**. Only two buttons are used: **Nitro** (right thumb) and **Brake** (left thumb). Drift is automatic when you turn hard. In Controls (start menu) you can switch to on-screen arrows, set the **tilt sensitivity** (1-10 slider, also in the Pause menu), flip the tilt direction, bring back a Drift button, or choose **Landscape** (fullscreen + screen lock where the browser allows it; on iPhone a "turn your phone" card is shown). iPhones ask for motion access once; Pause has a "Recenter tilt" button
-- **Drift**: hold Drift while steering through a corner to slide. A clean slide of 0.6 s or more, released on the road, charges the nitro tank and gives a short mini-boost. Crashing or leaving the road cancels the reward
-- **Nitro**: hold to boost (about 3 s from a full tank). The tank slowly refills on its own, much faster with good drifts
+- **Drift**: hold Drift while steering through a corner to slide. A clean slide of 0.6 s or more, released on the road, refills nitro by 16% per second of sliding (up to 50% per drift) and gives a short mini-boost. Crashing or leaving the road cancels the reward
+- **Nitro**: races start with 30% fuel; hold to boost, but it needs at least 8% to activate. A full tank lasts about 3 seconds. It passively refills at 1.5% per second while not being used (about 67 seconds from empty to full), and clean drifts refill it much faster. The HUD shows the exact fuel level and whether you are charging, boosting, or using a temporary burst
 - **Track-side details:** trees, bushes, rocks, tyre stacks, a grandstand and start-line flags, start lights, skid marks that stay on the road, and a minimap that also shows the boost pads. Decorations are placed from a fixed seed and are never on the road
 - **Wrong way:** turn round and a warning pulses instead of quietly losing places
 - Sound effects are synthesised in the browser (no audio files, and no music); the speaker button mutes them
