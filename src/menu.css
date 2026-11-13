@@ -201,3 +201,19 @@ html.compact .hud-box{padding:6px 10px}html.compact .hud-box.right #time{font-si
   .pause-resume { min-height:43px; }
   .pause-action { min-height:42px; padding:7px; }
 }
+
+
+/* Keep start UI clear of the player's lower-third grid position on phones. */
+@media (max-width: 900px) {
+  #lights { top: 4%; }
+  #countdown {
+    top: 24%;
+    min-width: 58px;
+    padding: 4px 12px;
+    border-radius: 11px;
+    background: rgba(5, 12, 22, .54);
+    border-color: rgba(224, 237, 255, .2);
+    font-size: clamp(42px, calc(var(--vw, 1vw) * 8), 64px);
+    backdrop-filter: blur(8px);
+  }
+}
