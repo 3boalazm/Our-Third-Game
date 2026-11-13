@@ -472,7 +472,7 @@ export function createRenderer(canvas) {
     }
   }
 
-  function draw({ track, karts, me, ghost, weather, photo }, dt) {
+  function draw({ track, karts, me, ghost, weather, photo, showStartMarker = false }, dt) {
     clock += dt;
     const focus = me ?? karts[0];
     const chase = photo ? true : cameraMode === "chase";
@@ -580,6 +580,41 @@ export function createRenderer(canvas) {
       };
     };
     drawWeather(weather, dt, project, focus, chase, photo);
+
+    // Keep the player's grid position obvious while the race is about to start.
+    // This is drawn in screen space so it stays legible in both camera modes.
+    if (!photo && showStartMarker && me) {
+      const point = project(me.x, me.y);
+      const pulse = 0.78 + 0.18 * (0.5 + 0.5 * Math.sin(clock * 6));
+      const radiusX = Math.max(27, scale * 44);
+      const radiusY = Math.max(18, scale * 29);
+      ctx.save();
+      ctx.translate(point.x, point.y);
+      ctx.globalAlpha = pulse;
+      ctx.strokeStyle = "#a7efff";
+      ctx.lineWidth = 3;
+      ctx.shadowColor = "rgba(91, 213, 255, 0.9)";
+      ctx.shadowBlur = 16;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, radiusX, radiusY, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      const labelY = -(radiusY + 26);
+      ctx.fillStyle = "rgba(5, 14, 26, 0.94)";
+      ctx.beginPath();
+      ctx.roundRect(-31, labelY - 10, 62, 20, 8);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(167, 239, 255, 0.9)";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "900 10px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("YOU", 0, labelY);
+      ctx.restore();
+    }
 
     if (!photo && boostVisual > 0.03) {
       drawSpeedLines();

@@ -2487,6 +2487,7 @@ function frame(now) {
         ghost: world.ghostPos,
         weather: world.weather,
         photo,
+        showStartMarker: world.state === "countdown" || (world.goFlash ?? 0) > 0,
       },
       paused && !photo ? 0 : frameDt,
     );
