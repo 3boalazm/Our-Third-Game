@@ -217,3 +217,135 @@ html.compact .hud-box{padding:6px 10px}html.compact .hud-box.right #time{font-si
     backdrop-filter: blur(8px);
   }
 }
+
+
+/* ---------- Nitro clarity: tank fuel is separate from temporary boosts ---------- */
+.nitro-widget {
+  display: flex;
+  width: 100%;
+  min-width: 120px;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 5px;
+  padding: 8px 9px;
+  border: 1px solid rgba(113, 203, 239, .24);
+  border-radius: 11px;
+  background: linear-gradient(145deg, rgba(15, 39, 57, .9), rgba(7, 18, 30, .9));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045), 0 5px 16px rgba(0,0,0,.14);
+  text-align: left;
+}
+.nitro-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.hud-box.right .nitro-topline > span {
+  color: #9dc8dc;
+  font-size: 8px;
+  font-weight: 950;
+  letter-spacing: .16em;
+}
+.hud-box.right .nitro-topline > strong {
+  color: #e6f8ff;
+  font-size: 14px;
+  font-weight: 1000;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.nitro-widget .meter {
+  width: 100%;
+  min-width: 0;
+  height: 8px;
+  margin: 0;
+  border: 1px solid rgba(175, 225, 244, .12);
+  background: rgba(255,255,255,.11);
+}
+.nitro-widget .meter i {
+  background: linear-gradient(90deg, #38a9dc, #85e8ff);
+  box-shadow: 0 0 10px rgba(83, 204, 245, .28);
+}
+.nitro-widget[data-state="active"] {
+  border-color: rgba(122, 230, 255, .62);
+  box-shadow: 0 0 0 1px rgba(91, 211, 247, .12), 0 0 20px rgba(54, 180, 226, .16);
+}
+.nitro-widget[data-state="active"] .meter i {
+  background: linear-gradient(90deg, #8cecff, #ffffff);
+  box-shadow: 0 0 12px rgba(137, 236, 255, .55);
+}
+.nitro-widget[data-state="low"] {
+  border-color: rgba(255, 181, 94, .32);
+}
+.nitro-widget[data-state="low"] .meter i {
+  background: linear-gradient(90deg, #c77c37, #ffc16e);
+}
+.nitro-widget[data-state="drifting"] {
+  border-color: rgba(110, 224, 176, .44);
+}
+.nitro-widget[data-state="drifting"] .meter i {
+  background: linear-gradient(90deg, #36b987, #9af0c8);
+}
+.nitro-widget[data-state="burst"] {
+  border-color: rgba(139, 190, 255, .48);
+}
+.hud-box.right .nitro-status {
+  color: #bfeeff;
+  font-size: 8px;
+  font-weight: 950;
+  letter-spacing: .035em;
+  line-height: 1.2;
+}
+.hud-box.right .nitro-help {
+  display: block;
+  color: #94a9bd;
+  font-size: 7px;
+  font-weight: 550;
+  line-height: 1.35;
+  white-space: normal;
+}
+.nitro-touch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  line-height: 1;
+}
+.nitro-touch strong {
+  font-size: 15px;
+  letter-spacing: .04em;
+}
+.nitro-touch small {
+  color: rgba(255,255,255,.86);
+  font-size: 11px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+.nitro-touch[data-state="low"] {
+  border-color: rgba(255, 190, 116, .62);
+  background: rgba(128, 72, 29, .5);
+}
+.nitro-touch[data-state="active"] {
+  border-color: rgba(159, 239, 255, .95);
+  background: rgba(45, 154, 196, .62);
+  box-shadow: 0 0 18px rgba(76, 199, 238, .32);
+}
+html.short .nitro-widget {
+  min-width: 112px;
+  gap: 4px;
+  margin-top: 3px;
+  padding: 6px 7px;
+}
+html.short .hud-box.right .nitro-help {
+  max-width: 160px;
+  font-size: 6.5px;
+}
+html.short .hud-box.right .nitro-status {
+  font-size: 7px;
+}
+@media (max-width: 650px) {
+  .nitro-widget { min-width: 108px; padding: 7px 8px; }
+  .hud-box.right .nitro-help { max-width: 165px; }
+  .nitro-touch strong { font-size: 13px; }
+  .nitro-touch small { font-size: 10px; }
+}
