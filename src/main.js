@@ -189,7 +189,14 @@ root.innerHTML = `
       <span id="ghost" hidden></span>
       <span id="speed"></span>
       <span id="draft" class="draft" hidden>Slipstream</span>
-      <div class="meter" role="img" aria-label="Nitro tank"><i id="nitro-fill"></i></div>
+      <div class="nitro-widget" id="nitro-widget" data-state="ready">
+        <div class="nitro-topline"><span>NITRO FUEL</span><strong id="nitro-value">30%</strong></div>
+        <div class="meter" id="nitro-meter" role="progressbar" aria-label="Nitro fuel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="30">
+          <i id="nitro-fill"></i>
+        </div>
+        <span class="nitro-status" id="nitro-status">HOLD TO BOOST</span>
+        <span class="nitro-help">Slowly refills when unused. Drift, then release, for a faster refill. Blue pads give a separate short burst.</span>
+      </div>
     </div>
   </div>
   <div id="net" hidden></div>
@@ -222,7 +229,9 @@ root.innerHTML = `
     </div>
     <div class="touch-right">
       <button type="button" class="mid" id="drift-btn" data-touch="drift" aria-label="Drift" hidden>Drift</button>
-      <button type="button" class="large" data-touch="nitro" aria-label="Nitro">Nitro</button>
+      <button type="button" class="large nitro-touch" id="nitro-touch-btn" data-touch="nitro" aria-label="Nitro boost, 30 percent charged">
+        <strong>NITRO</strong><small id="nitro-button-value">30%</small>
+      </button>
     </div>
   </div>
   <div id="screen"></div>
@@ -243,6 +252,12 @@ const hud = {
   ghost: $("ghost"),
   speed: $("speed"),
   draft: $("draft"),
+  nitroWidget: $("nitro-widget"),
+  nitroMeter: $("nitro-meter"),
+  nitroValue: $("nitro-value"),
+  nitroStatus: $("nitro-status"),
+  nitroButton: $("nitro-touch-btn"),
+  nitroButtonValue: $("nitro-button-value"),
   nitro: $("nitro-fill"),
 };
 const netBadge = $("net");
@@ -921,11 +936,13 @@ function handleKartEvents(kart) {
   }
   if (kart.driftReward > 0) {
     if (mine) {
-      showToast("Drift boost!", "boost", 1100);
+      const gain = Math.round((kart.driftNitroReward ?? 0) * 100);
+      showToast(gain > 0 ? `DRIFT REFILL +${gain}% NITRO` : "Drift burst!", "boost", 1300);
       audio.boost();
       vibrate(20);
     }
     kart.driftReward = 0;
+    kart.driftNitroReward = 0;
   }
   if (mine && kart.nitroOn && !kart.wasNitro) {
     audio.boost();
@@ -1125,9 +1142,49 @@ function updateHud() {
   if (weatherName) setText("weather", hud.weather, weatherName);
   setText("speed", hud.speed, `${Math.round(me.speed / 4)} km/h`);
   hud.draft.hidden = !me.drafting;
-  hud.nitro.style.width = `${Math.round(me.nitro * 100)}%`;
+
+  const nitroPercent = Math.round(me.nitro * 100);
+  const nitroReady = me.nitro >= Physics.nitroStartMin;
+  hud.nitro.style.width = `${nitroPercent}%`;
   hud.nitro.classList.toggle("on", me.nitroOn);
-  hud.nitro.classList.toggle("low", me.nitro < 0.12);
+  hud.nitro.classList.toggle("low", !nitroReady);
+  hud.nitroWidget.dataset.state = me.nitroOn
+    ? "active"
+    : me.boostTimer > 0
+      ? "burst"
+      : me.drifting
+        ? "drifting"
+        : nitroReady
+          ? "ready"
+          : "low";
+  setText("nitro-value", hud.nitroValue, `${nitroPercent}%`);
+  hud.nitroMeter.setAttribute("aria-valuenow", String(nitroPercent));
+
+  let nitroStatus = "HOLD NITRO TO BOOST";
+  if (me.nitroOn) {
+    nitroStatus = "BOOSTING · FUEL DRAINING";
+  } else if (me.boostTimer > 0 && me.boostSource === "pad") {
+    nitroStatus = "BLUE PAD · TEMPORARY BOOST";
+  } else if (me.boostTimer > 0 && me.boostSource === "drift") {
+    nitroStatus = "DRIFT BURST · NITRO REFILLED";
+  } else if (me.drifting) {
+    nitroStatus = me.driftTime >= Physics.driftMinTime
+      ? "RELEASE NOW · BANK NITRO"
+      : "KEEP SLIDING · THEN RELEASE";
+  } else if (!nitroReady) {
+    nitroStatus = `LOW · NEED ${Math.round(Physics.nitroStartMin * 100)}% TO BOOST`;
+  } else if (me.nitro >= 0.99) {
+    nitroStatus = "FULL TANK · READY";
+  }
+  setText("nitro-status", hud.nitroStatus, nitroStatus);
+  setText("nitro-button-value", hud.nitroButtonValue, `${nitroPercent}%`);
+  hud.nitroButton.dataset.state = me.nitroOn ? "active" : nitroReady ? "ready" : "low";
+  hud.nitroButton.setAttribute(
+    "aria-label",
+    nitroReady
+      ? `Nitro boost, ${nitroPercent} percent charged. Hold to use.`
+      : `Nitro boost, ${nitroPercent} percent charged. Need ${Math.round(Physics.nitroStartMin * 100)} percent to activate.`,
+  );
 
   // live drift read-out, or the last "boost" message
   const nowMs = performance.now();
