@@ -2056,20 +2056,36 @@ function showPause() {
     return;
   }
   const solo = !online;
+  const lap = Math.max(1, Math.min(world.laps, Math.floor(me?.progress / world.track.N) + 1));
+  const place = me ? standings().indexOf(me) + 1 : 1;
+  const sessionLabel = world.mode === "trial" ? "TIME TRIAL" : solo ? "QUICK RACE" : "ONLINE RACE";
+  const progressLabel = world.mode === "trial" ? `LAP ${lap}` : `P${place} · LAP ${lap}/${world.laps}`;
   const panel = card(`
-    <h1>${solo ? "Paused" : "Race menu"}</h1>
-    <p class="sub">${solo ? "The race is frozen." : "The race keeps going while this is open."}</p>
-    <button type="button" class="big primary" data-act="resume"><strong>Resume</strong></button>
-    ${usingTilt() ? '<button type="button" class="big" data-act="recenter"><strong>Recenter tilt</strong><span>Hold the phone the way you like, then tap</span></button>' : ""}
-    ${solo && replayBuffer.length >= 20 ? `<button type="button" class="big" data-act="replay"><strong>Replay last 10 s</strong><span>Watch the race from a cinematic camera</span></button>` : ""}
-    ${solo ? `<button type="button" class="big" data-act="photo"><strong>Photo mode</strong><span>Freeze the race and frame a shot</span></button>` : ""}
-    ${solo ? `<button type="button" class="big" data-act="restart"><strong>Restart ${world.mode === "trial" ? "time trial" : "race"}</strong></button>` : ""}
-    <a class="big" data-role="menu"><strong>${solo ? "Quit to menu" : "Leave race"}</strong></a>
+    <div class="pause-topline"><span>RACE CONTROL</span><span class="pause-status">${solo ? "PAUSED" : "LIVE SESSION"}</span></div>
+    <h1>${solo ? "Take a breather." : "Race menu."}</h1>
+    <p class="pause-sub">${solo ? "Your race is safely paused. Jump back in when you're ready." : "Your rival keeps moving while this menu is open."}</p>
+    <div class="pause-context">
+      <div><small>CIRCUIT</small><strong>${world.track.def.name}</strong></div>
+      <div><small>SESSION</small><strong>${sessionLabel}</strong></div>
+      <div><small>PROGRESS</small><strong>${progressLabel}</strong></div>
+    </div>
+    <button type="button" class="big primary pause-resume" data-act="resume"><strong>RESUME RACE</strong><span>Back to the track <b>↗</b></span></button>
+    <div class="pause-action-grid">
+      ${solo && replayBuffer.length >= 20 ? `<button type="button" class="big pause-action" data-act="replay"><strong>Replay last 10 s</strong><span>Watch the action again</span></button>` : ""}
+      ${solo ? `<button type="button" class="big pause-action" data-act="photo"><strong>Photo mode</strong><span>Capture your best angle</span></button>` : ""}
+      ${solo ? `<button type="button" class="big pause-action" data-act="restart"><strong>Restart ${world.mode === "trial" ? "time trial" : "race"}</strong><span>Start this session over</span></button>` : ""}
+      ${usingTilt() ? `<button type="button" class="big pause-action" data-act="recenter"><strong>Recenter tilt</strong><span>Reset your phone position</span></button>` : ""}
+    </div>
+    <div class="pause-adjustments"><span class="pause-adjust-label">QUICK SETTINGS</span></div>
+    <a class="pause-quit" data-role="menu">${solo ? "Quit to menu" : "Leave race"} <b>↗</b></a>
   `);
+  panel.classList.add("pause-card");
   panel.querySelector('[data-role="menu"]').href = window.location.pathname;
+
+  const adjustments = panel.querySelector(".pause-adjustments");
   if (isTouchDevice && prefs.steer === "tilt") {
     const group = document.createElement("div");
-    group.className = "group";
+    group.className = "group pause-setting-group";
     const label = document.createElement("span");
     label.className = "label";
     label.textContent = "Tilt sensitivity";
@@ -2087,9 +2103,12 @@ function showPause() {
         onChange: savePrefs,
       }),
     );
-    panel.querySelector('[data-act="resume"]').before(group);
+    adjustments.append(group);
   }
-  panel.querySelector('[data-act="resume"]').before(cameraGroup());
+  const camera = cameraGroup();
+  camera.classList.add("pause-setting-group");
+  adjustments.append(camera);
+
   panel.querySelector('[data-act="resume"]').addEventListener("click", () => togglePause());
   panel.querySelector('[data-act="recenter"]')?.addEventListener("click", () => {
     recenterTilt();
@@ -2106,7 +2125,7 @@ function showPause() {
     }
   });
   const wrap = document.createElement("div");
-  wrap.className = "overlay";
+  wrap.className = "overlay pause-overlay";
   wrap.append(panel);
   screen.append(wrap);
   pauseEl = wrap;
