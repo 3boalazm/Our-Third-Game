@@ -100,7 +100,9 @@ export function makeKart({
     nitroOn: false,
     drifting: false,
     driftTime: 0, // seconds of the current slide
+    driftNitroReward: 0, // one-shot nitro earned by the last clean drift
     boostTimer: 0, // seconds of mini-boost left
+    boostSource: null, // "drift" or "pad"; temporary burst is separate from nitro fuel
     drafting: false, // in another kart's slipstream right now
     draft: 0, // 0..1 strength
     padCooldown: 0, // seconds until a boost pad can be used again
@@ -147,7 +149,9 @@ export function placeOnGrid(kart, track, slot) {
   kart.nitroOn = false;
   kart.drifting = false;
   kart.driftTime = 0;
+  kart.driftNitroReward = 0;
   kart.boostTimer = 0;
+  kart.boostSource = null;
   kart.hit = 0;
   kart.driftReward = 0;
   kart.padHit = 0;
@@ -221,6 +225,7 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
     kart.nitro = Math.min(1, kart.nitro + (kart.bot ? P.regenBot : P.regenHuman) * dt);
   }
   kart.boostTimer = Math.max(0, kart.boostTimer - dt);
+  if (kart.boostTimer === 0) kart.boostSource = null;
 
   let power = kart.nitroOn ? P.nitroTop : kart.boostTimer > 0 ? P.boostTop : 1;
   let thrust = kart.nitroOn ? P.nitroAccel : kart.boostTimer > 0 ? P.boostAccel : 1;
@@ -261,11 +266,14 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
     along *= Math.exp(-P.driftSpeedLoss * dt);
   } else if (kart.driftTime > 0) {
     if (kart.driftTime >= P.driftMinTime && onRoad) {
+      const nitroBeforeDrift = kart.nitro;
       kart.nitro = Math.min(
         1,
         kart.nitro + Math.min(P.driftNitroCap, kart.driftTime * P.driftToNitro),
       );
+      kart.driftNitroReward = kart.nitro - nitroBeforeDrift;
       kart.boostTimer = Math.min(1, 0.3 + kart.driftTime * 0.15);
+      kart.boostSource = "drift";
       kart.driftReward = kart.driftTime;
     }
     kart.driftTime = 0;
@@ -319,6 +327,7 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
       const lat = Math.abs(-dx * pad.ty + dy * pad.tx);
       if (Math.abs(lon) <= pad.length / 2 && lat <= pad.half) {
         kart.boostTimer = Math.max(kart.boostTimer, P.padBoostTime);
+        kart.boostSource = "pad";
         kart.padCooldown = P.padCooldown;
         kart.padHit = 1;
         break;

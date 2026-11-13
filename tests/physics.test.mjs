@@ -166,6 +166,38 @@ test("slipstream is strongest right behind a fast kart in line", () => {
   assert.equal(slow, 0, "a slow kart does not create a draft");
 });
 
+test("nitro requires strictly more than the 8 percent activation threshold", () => {
+  const kart = newKart(track);
+  kart.nitro = Physics.nitroStartMin;
+  stepKart(kart, { ...straight, nitro: true }, FixedStep, track, true);
+  assert.equal(kart.nitroOn, false, "exactly 8 percent should not activate nitro");
+  assert.ok(kart.nitro > Physics.nitroStartMin, "idle fuel should begin to refill");
+  stepKart(kart, { ...straight, nitro: true }, FixedStep, track, true);
+  assert.equal(kart.nitroOn, true, "nitro should activate once fuel is above 8 percent");
+});
+
+test("passive nitro regeneration is visible at the documented rate", () => {
+  const kart = newKart(track);
+  kart.nitro = 0;
+  for (let i = 0; i < 60; i += 1) {
+    stepKart(kart, straight, 1 / 60, track, true);
+  }
+  assert.ok(Math.abs(kart.nitro - Physics.regenHuman) < 0.0001, `nitro ${kart.nitro}`);
+});
+
+test("releasing a clean drift reports the nitro it actually refilled", () => {
+  const kart = newKart(track);
+  kart.dist = 0;
+  kart.a = 0;
+  kart.vx = 320;
+  kart.vy = 0;
+  kart.driftTime = 2;
+  stepKart(kart, straight, FixedStep, track, true);
+  assert.ok(Math.abs(kart.driftNitroReward - 0.32) < 0.0001, `gain ${kart.driftNitroReward}`);
+  assert.equal(kart.boostSource, "drift");
+  assert.ok(kart.boostTimer > 0.5, `no drift burst: ${kart.boostTimer}`);
+});
+
 test("a boost pad fires once, then waits for its cooldown", () => {
   const pad = track.pads[0];
   const kart = newKart(track);
@@ -178,9 +210,12 @@ test("a boost pad fires once, then waits for its cooldown", () => {
   kart.vy = pad.ty * 320;
   kart.speed = 320;
   kart.boostTimer = 0;
+  const nitroBeforePad = kart.nitro;
   stepKart(kart, straight, FixedStep, track, true);
   assert.equal(kart.padHit, 1, "the pad should report a hit");
   assert.ok(kart.boostTimer > 0.6, `no boost: ${kart.boostTimer}`);
+  assert.equal(kart.boostSource, "pad");
+  assert.ok(kart.nitro - nitroBeforePad < 0.002, "a pad burst must not refill the nitro tank");
   kart.padHit = 0;
   kart.x = pad.x;
   kart.y = pad.y;

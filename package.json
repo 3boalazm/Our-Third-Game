@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "npm test",
     "build": "vite build",
     "preview": "vite preview",
     "test": "node scripts/check-tracks.mjs && node --test"
