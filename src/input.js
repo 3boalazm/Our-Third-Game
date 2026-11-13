@@ -50,10 +50,7 @@ export function tiltFromGravity(beta, gamma, angle = 0) {
 // While the game is turned sideways by CSS (see layout.js) the phone itself
 // still reports "portrait", so layout.js tells us the angle it is drawn at.
 let screenAngleOverride = null;
-
-export function setScreenAngleOverride(angle) {
-  screenAngleOverride = angle;
-}
+let lastResolvedScreenAngle = null;
 
 function screenAngle() {
   if (screenAngleOverride !== null) {
@@ -73,11 +70,33 @@ const tilt = {
   raw: 0, // degrees, filtered
   neutral: 0,
   lastEvent: 0,
+  lastBeta: null,
+  lastGamma: null,
+  samples: [],
+  recenterPending: false,
   gx: 0, // gravity direction in the phone's own x / y axes (-1..1)
   gy: 0,
   range: 24, // degrees of tilt for full lock
   flip: false,
 };
+
+function scheduleTiltRecenter() {
+  tilt.recenterPending = true;
+  steerValue = 0;
+  autoDriftOn = false;
+}
+
+export function setScreenAngleOverride(angle) {
+  const previousAngle = lastResolvedScreenAngle;
+  screenAngleOverride = angle;
+  const nextAngle = screenAngle();
+  if (previousAngle === null || previousAngle !== nextAngle) {
+    // The screen's "right" axis changed. Rebase on the first reading in the
+    // new orientation so the old landscape/portrait zero cannot pull left.
+    scheduleTiltRecenter();
+  }
+  lastResolvedScreenAngle = nextAngle;
+}
 
 // Which way the phone is held, for layout.js. null when there is no sensor.
 export function deviceGravity() {
@@ -99,12 +118,27 @@ function onOrientation(event) {
   if (event.beta == null || event.gamma == null) {
     return;
   }
+  tilt.lastBeta = event.beta;
+  tilt.lastGamma = event.gamma;
   const b = (event.beta * Math.PI) / 180;
   const g = (event.gamma * Math.PI) / 180;
   tilt.gx = Math.sin(g) * Math.cos(b);
   tilt.gy = -Math.sin(b);
   const degrees = tiltFromGravity(event.beta, event.gamma, screenAngle());
-  tilt.raw += (degrees - tilt.raw) * 0.5; // light smoothing against sensor noise
+
+  if (tilt.recenterPending) {
+    // First fresh sample after a screen rotation becomes the new neutral pose.
+    tilt.raw = degrees;
+    tilt.neutral = degrees;
+    tilt.samples = [degrees];
+    tilt.recenterPending = false;
+    steerValue = 0;
+    autoDriftOn = false;
+  } else {
+    tilt.raw += (degrees - tilt.raw) * 0.5; // light smoothing against sensor noise
+    tilt.samples.push(degrees);
+    if (tilt.samples.length > 8) tilt.samples.shift();
+  }
   tilt.lastEvent = performance.now();
 }
 
@@ -131,12 +165,35 @@ export async function enableTilt() {
 }
 
 export function recenterTilt() {
-  tilt.neutral = tilt.raw;
+  const fresh = performance.now() - tilt.lastEvent < 700;
+  if (fresh && tilt.samples.length > 0 && !tilt.recenterPending) {
+    const recent = tilt.samples.slice(-6);
+    const average = recent.reduce((sum, value) => sum + value, 0) / recent.length;
+    tilt.raw = average;
+    tilt.neutral = average;
+    tilt.recenterPending = false;
+  } else {
+    // If the sensor is asleep, let the next live reading establish the zero.
+    scheduleTiltRecenter();
+  }
+  steerValue = 0;
+  autoDriftOn = false;
+  return fresh;
 }
 
 export function setTiltOptions({ range, flip }) {
   if (range) tilt.range = range;
   if (flip !== undefined) tilt.flip = flip;
+}
+
+// Convert the calibrated sensor angle into a -1..1 steering target.
+// Kept pure so the landscape/portrait calibration behaviour can be tested.
+export function tiltSteerTarget(raw, neutral, range = 24, flip = false) {
+  let degrees = raw - neutral;
+  if (flip) degrees = -degrees;
+  const dead = 2;
+  degrees = Math.abs(degrees) < dead ? 0 : degrees - Math.sign(degrees) * dead;
+  return Math.max(-1, Math.min(1, degrees / (range - dead)));
 }
 
 // True while the sensor is really delivering readings.
@@ -329,11 +386,7 @@ export function readInput(dt) {
   if (pad && Math.abs(pad.steer) > 0.001) {
     steerValue += (pad.steer - steerValue) * Math.min(1, PadFollow * dt);
   } else if (usingTilt()) {
-    let degrees = tilt.raw - tilt.neutral;
-    if (tilt.flip) degrees = -degrees;
-    const dead = 2; // ignore tiny wobbles around the centre
-    degrees = Math.abs(degrees) < dead ? 0 : degrees - Math.sign(degrees) * dead;
-    const target = Math.max(-1, Math.min(1, degrees / (tilt.range - dead)));
+    const target = tiltSteerTarget(tilt.raw, tilt.neutral, tilt.range, tilt.flip);
     steerValue += (target - steerValue) * Math.min(1, TiltFollow * dt);
   } else {
     const left = keys.has("ArrowLeft") || keys.has("KeyA") || touch.left;
