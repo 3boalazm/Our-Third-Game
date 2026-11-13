@@ -195,7 +195,8 @@ root.innerHTML = `
           <i id="nitro-fill"></i>
         </div>
         <span class="nitro-status" id="nitro-status">HOLD TO BOOST</span>
-        <span class="nitro-help">Slowly refills when unused. Drift, then release, for a faster refill. Blue pads give a separate short burst.</span>
+        <span class="nitro-help">AUTO +1.5%/SEC · DRIFT +16%/SEC (MAX +50%)</span>
+        <span class="nitro-help">Clean slide 0.6s+, then release on track. Blue pads = short burst, no tank refill.</span>
       </div>
     </div>
   </div>
@@ -1144,7 +1145,7 @@ function updateHud() {
   hud.draft.hidden = !me.drafting;
 
   const nitroPercent = Math.round(me.nitro * 100);
-  const nitroReady = me.nitro >= Physics.nitroStartMin;
+  const nitroReady = me.nitro > Physics.nitroStartMin;
   hud.nitro.style.width = `${nitroPercent}%`;
   hud.nitro.classList.toggle("on", me.nitroOn);
   hud.nitro.classList.toggle("low", !nitroReady);
@@ -1169,10 +1170,10 @@ function updateHud() {
     nitroStatus = "DRIFT BURST · NITRO REFILLED";
   } else if (me.drifting) {
     nitroStatus = me.driftTime >= Physics.driftMinTime
-      ? "RELEASE NOW · BANK NITRO"
-      : "KEEP SLIDING · THEN RELEASE";
+      ? "RELEASE ON TRACK · BANK NITRO"
+      : "KEEP SLIDING · 0.6S MIN";
   } else if (!nitroReady) {
-    nitroStatus = `LOW · NEED ${Math.round(Physics.nitroStartMin * 100)}% TO BOOST`;
+    nitroStatus = `LOW · NEED MORE THAN ${Math.round(Physics.nitroStartMin * 100)}%`;
   } else if (me.nitro >= 0.99) {
     nitroStatus = "FULL TANK · READY";
   }
@@ -1183,7 +1184,7 @@ function updateHud() {
     "aria-label",
     nitroReady
       ? `Nitro boost, ${nitroPercent} percent charged. Hold to use.`
-      : `Nitro boost, ${nitroPercent} percent charged. Need ${Math.round(Physics.nitroStartMin * 100)} percent to activate.`,
+      : `Nitro boost, ${nitroPercent} percent charged. Need more than ${Math.round(Physics.nitroStartMin * 100)} percent to activate.`,
   );
 
   // live drift read-out, or the last "boost" message
