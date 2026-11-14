@@ -302,7 +302,9 @@ export function createRenderer(canvas) {
       ctx.closePath();
       ctx.fill();
     }
-    // wheels
+    // Chassis silhouettes are shared by the showroom and the race renderer.
+    const bodyLength = kart.vehicle === "thunder" ? 52 : kart.vehicle === "sprint" ? 42 : 46;
+    const bodyHeight = kart.vehicle === "thunder" ? 25 : kart.vehicle === "sprint" ? 19 : 22;
     ctx.fillStyle = "#16181f";
     for (const [wx, wy] of [[-16, -15], [14, -15], [-16, 9], [14, 9]]) {
       ctx.fillRect(wx, wy, 12, 7);
@@ -310,7 +312,17 @@ export function createRenderer(canvas) {
     // body
     ctx.fillStyle = kart.color;
     ctx.beginPath();
-    ctx.roundRect(-22, -11, 46, 22, 8);
+    if (kart.vehicle === "sprint") {
+      ctx.moveTo(-bodyLength / 2, 0);
+      ctx.lineTo(-bodyLength / 2 + 8, -bodyHeight / 2);
+      ctx.lineTo(bodyLength / 2 - 7, -bodyHeight / 2);
+      ctx.lineTo(bodyLength / 2, 0);
+      ctx.lineTo(bodyLength / 2 - 7, bodyHeight / 2);
+      ctx.lineTo(-bodyLength / 2 + 8, bodyHeight / 2);
+      ctx.closePath();
+    } else {
+      ctx.roundRect(-bodyLength / 2, -bodyHeight / 2, bodyLength, bodyHeight, kart.vehicle === "thunder" ? 6 : 8);
+    }
     ctx.fill();
     ctx.lineWidth = isMe ? 3 : 1.5;
     ctx.strokeStyle = isMe ? "#ffffff" : "rgba(0, 0, 0, 0.35)";

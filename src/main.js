@@ -1,6 +1,7 @@
 import "./styles.css";
 import "./menu.css";
 import { Tracks, buildTrack, trackById } from "./track.js";
+import { GarageVehicles, GarageTunes, vehicleById, tuneById, loadoutStats } from "./garage.js";
 import {
   FixedStep,
   KartColors,
@@ -114,6 +115,11 @@ function readPrefs() {
     records: readRecords(saved.records),
     color: KartColors.includes(saved.color) ? saved.color : KartColors[0],
     livery: LiveryOptions.includes(saved.livery) ? saved.livery : "stripe",
+    vehicle: GarageVehicles.some((item) => item.id === saved.vehicle) ? saved.vehicle : "apex",
+    tune: GarageTunes.some((item) => item.id === saved.tune) ? saved.tune : "balanced",
+    credits: Number.isFinite(Number(saved.credits)) ? Math.max(0, Number(saved.credits)) : 400,
+    unlockedVehicles: ["sprint", "apex", ...(Array.isArray(saved.unlockedVehicles) ? saved.unlockedVehicles : []).filter((id) => GarageVehicles.some((item) => item.id === id))],
+    unlockedTunes: ["balanced", "engine", ...(Array.isArray(saved.unlockedTunes) ? saved.unlockedTunes : []).filter((id) => GarageTunes.some((item) => item.id === id))],
     weather: WeatherOptions.some((w) => w.id === saved.weather) ? saved.weather : "clear",
     padBindings: normalizePadBindings(saved.padBindings),
   };
@@ -624,7 +630,7 @@ function startSolo() {
       { id: "b1", name: "Zip", color: colors[0], bot: true, skill: skills[0] },
       { id: "b2", name: "Bolt", color: colors[1], bot: true, skill: skills[1] },
       { id: "b3", name: "Turbo", color: colors[2], bot: true, skill: skills[2] },
-      { id: "me", name: "You", color: prefs.color, livery: prefs.livery, isMe: true },
+      { id: "me", name: "You", color: prefs.color, livery: prefs.livery, vehicle: prefs.vehicle, tune: prefs.tune, isMe: true },
     ],
   });
 }
@@ -634,7 +640,7 @@ function startTimeTrial() {
     trackId: prefs.track,
     laps: prefs.laps,
     mode: "trial",
-    kartsSpec: [{ id: "me", name: "You", color: prefs.color, livery: prefs.livery, isMe: true }],
+    kartsSpec: [{ id: "me", name: "You", color: prefs.color, livery: prefs.livery, vehicle: prefs.vehicle, tune: prefs.tune, isMe: true }],
   });
 }
 
@@ -646,7 +652,7 @@ function startDailyChallenge() {
     mode: "trial",
     weather: "clear",
     daily: true,
-    kartsSpec: [{ id: "me", name: "You", color: prefs.color, livery: prefs.livery, isMe: true }],
+    kartsSpec: [{ id: "me", name: "You", color: prefs.color, livery: prefs.livery, vehicle: prefs.vehicle, tune: prefs.tune, isMe: true }],
   });
 }
 
@@ -657,6 +663,7 @@ function startOnlineRace(trackId, laps) {
   const theirs = online.role === "host" ? guestKart : hostKart;
   mine.isMe = true;
   mine.name = "You";
+  Object.assign(mine, { color: prefs.color, livery: prefs.livery, vehicle: prefs.vehicle, tune: prefs.tune });
   theirs.isRemote = true;
   theirs.name = "Friend";
   startRace({ trackId, laps, kartsSpec: [hostKart, guestKart], weather: "clear" });
@@ -1384,6 +1391,29 @@ function choice(options, selected, onPick, label) {
   return row;
 }
 
+function garageCards(items, selected, unlocks, credits, onPick, label) {
+  const grid = document.createElement("div");
+  grid.className = "garage-item-grid";
+  grid.setAttribute("role", "radiogroup");
+  grid.setAttribute("aria-label", label);
+  for (const item of items) {
+    const unlocked = unlocks.includes(item.id);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `garage-item${selected === item.id ? " active" : ""}${unlocked ? "" : " locked"}`;
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-checked", String(selected === item.id));
+    button.disabled = !unlocked && credits < item.cost;
+    const traits = item.speed != null
+      ? `${Math.round(item.speed * 100)} SPD · ${Math.round(item.accel * 100)} LAU · ${Math.round(item.handling * 100)} GRP`
+      : item.description;
+    button.innerHTML = `<strong>${item.name}</strong><small>${item.description}</small><span>${unlocked ? traits : `🔒  ${item.cost} CR · BUY`}</span>`;
+    button.addEventListener("click", () => onPick(item, !unlocked));
+    grid.append(button);
+  }
+  return grid;
+}
+
 function showMenu() {
   hud.root.hidden = true;
   touchEl.hidden = true;
@@ -1429,7 +1459,7 @@ function showMenu() {
             <aside class="home-sidebar">
               <section class="menu-side-card daily-side-card"><div class="side-card-heading"><span class="eyebrow">FRESH EVERY DAY</span><span class="side-live">LIVE</span></div><h2>DAILY<br>CHALLENGE</h2><p>One lap. One target. Make it count.</p><div data-slot="daily"></div></section>
               <section class="menu-side-card track-side-card"><div class="side-card-heading"><span class="eyebrow">CURRENT CIRCUIT</span><span class="side-index">01 / 03</span></div><strong data-role="track-preview-name">Sunny Loop</strong><p data-slot="record" class="record"></p><button type="button" class="text-action" data-menu-page="tracks">EXPLORE TRACKS <b>↗</b></button></section>
-              <section class="menu-side-card garage-side-card"><div class="garage-side-mark">✳</div><div><span class="eyebrow">MAKE IT YOURS</span><strong>YOUR KART</strong><small>Colour · livery · identity</small></div><button type="button" class="round-arrow" data-menu-page="garage" aria-label="Open garage">↗</button></section>
+              <section class="menu-side-card garage-side-card"><div class="garage-side-mark">✳</div><div><span class="eyebrow">MAKE IT YOURS</span><strong>YOUR KART</strong><small>Cars · parts · paint</small></div><button type="button" class="round-arrow" data-menu-page="garage" aria-label="Open garage">↗</button></section>
             </aside>
           </div>
           <div class="home-footer-stats"><span><b>03</b> UNIQUE TRACKS</span><span><b>06</b> KART COLOURS</span><span><b>∞</b> PERSONAL BESTS TO BEAT</span><span class="profile-progress" data-role="profile-stats">0 / 3 TRACK RECORDS SET</span></div>
@@ -1466,9 +1496,21 @@ function showMenu() {
                   <circle cx="210" cy="177" r="12" fill="#0b1422" stroke="rgba(255,255,255,.65)" stroke-width="3"/>
                 </svg>
               </div>
-              <div class="showcase-caption"><span>YOUR CURRENT BUILD</span><strong data-role="garage-colour-name">BLUE / RACING STRIPE</strong></div>
+              <div class="garage-showroom-badge"><i></i><span>DRAG THE KART TO ORBIT</span><b data-role="garage-class">ALL-ROUNDER</b><small>READY FOR THE GRID</small></div>
+              <div class="showcase-caption"><span data-role="garage-model-name">APEX R · CURRENT BUILD</span><strong data-role="garage-colour-name">BLUE / RACING STRIPE</strong></div>
             </section>
-            <section class="menu-panel garage-options"><div class="panel-heading"><span>01 / BODY COLOUR</span><span>6 FINISHES</span></div><div data-slot="color"></div><div class="garage-divider"></div><div class="panel-heading"><span>02 / LIVERY</span><span>3 DESIGNS</span></div><div data-slot="livery"></div><div class="garage-tip"><span>✦</span> Your kart is saved automatically and will be ready on the starting grid.</div><button type="button" class="panel-primary-action" data-menu-page="home">BACK TO HOME <b>↗</b></button></section>
+            <section class="menu-panel garage-options">
+              <div class="garage-section-head"><div><span class="eyebrow">YOUR FLEET</span><h2>CHOOSE A CHASSIS</h2></div><span class="garage-wallet" data-role="garage-wallet">400 CR</span></div>
+              <div data-slot="vehicle" class="garage-vehicle-list"></div><div class="garage-live-stats" data-role="garage-stats"></div>
+              <div class="garage-divider"></div>
+              <div class="garage-section-head"><div><span class="eyebrow">RACE ENGINEERING</span><h2>FIT A SETUP KIT</h2></div><span class="garage-step">02 / 03</span></div>
+              <div data-slot="tune" class="garage-tune-list"></div>
+              <div class="garage-divider"></div>
+              <div class="garage-section-head"><div><span class="eyebrow">PERSONAL FINISH</span><h2>PAINT & LIVERY</h2></div><span class="garage-step">03 / 03</span></div>
+              <div data-slot="color"></div><div data-slot="livery"></div>
+              <div class="garage-tip"><span>✦</span><span data-role="garage-tune-copy">Your setup is saved and changes the speed, handling and nitro duration in races.</span></div>
+              <button type="button" class="panel-primary-action" data-menu-page="home">TAKE IT TO THE GRID <b>↗</b></button>
+            </section>
           </div>
         </section>
         <section class="menu-page" data-menu-screen="records" hidden>
@@ -1540,6 +1582,37 @@ function showMenu() {
   };
 
   const recordsSlot = element.querySelector('[data-slot="records"]');
+  const garagePreview = element.querySelector('[data-role="garage-kart"]');
+  let orbit = { pointer: null, x: 0, y: 0, yaw: 0, pitch: 24 };
+  const applyOrbit = () => {
+    garagePreview.style.setProperty("--garage-yaw", `${orbit.yaw}deg`);
+    garagePreview.style.setProperty("--garage-pitch", `${orbit.pitch}deg`);
+  };
+  garagePreview.addEventListener("pointerdown", (event) => {
+    orbit.pointer = event.pointerId;
+    orbit.x = event.clientX;
+    orbit.y = event.clientY;
+    garagePreview.setPointerCapture(event.pointerId);
+    garagePreview.classList.add("orbiting");
+    event.preventDefault();
+  });
+  garagePreview.addEventListener("pointermove", (event) => {
+    if (orbit.pointer !== event.pointerId) return;
+    orbit.yaw = (orbit.yaw + (event.clientX - orbit.x) * 0.8) % 360;
+    orbit.pitch = Math.max(-8, Math.min(62, orbit.pitch + (event.y - orbit.y) * 0.42));
+    orbit.x = event.clientX;
+    orbit.y = event.clientY;
+    applyOrbit();
+  });
+  const stopOrbit = (event) => {
+    if (orbit.pointer !== event.pointerId) return;
+    orbit.pointer = null;
+    garagePreview.classList.remove("orbiting");
+  };
+  garagePreview.addEventListener("pointerup", stopOrbit);
+  garagePreview.addEventListener("pointercancel", stopOrbit);
+  applyOrbit();
+
   const renderRecords = () => {
     if (!recordsSlot) return;
     const rows = Tracks.map((trackDef) => {
@@ -1698,6 +1771,18 @@ function showMenu() {
         "Weather",
       ),
     );
+    element.querySelector('[data-slot="vehicle"]').replaceChildren(
+      garageCards(GarageVehicles, prefs.vehicle, prefs.unlockedVehicles, prefs.credits, (item, purchase) => {
+        if (purchase) { prefs.credits -= item.cost; prefs.unlockedVehicles.push(item.id); }
+        prefs.vehicle = item.id; savePrefs(); renderChoices();
+      }, "Chassis"),
+    );
+    element.querySelector('[data-slot="tune"]').replaceChildren(
+      garageCards(GarageTunes, prefs.tune, prefs.unlockedTunes, prefs.credits, (item, purchase) => {
+        if (purchase) { prefs.credits -= item.cost; prefs.unlockedTunes.push(item.id); }
+        prefs.tune = item.id; savePrefs(); renderChoices();
+      }, "Workshop setup"),
+    );
     element.querySelector('[data-slot="color"]').replaceChildren(
       swatches(prefs.color, (value) => {
         prefs.color = value;
@@ -1735,10 +1820,19 @@ function showMenu() {
     element.querySelector('[data-role="track-record-summary"]').textContent = best
       ? `${formatTime(best)} · ${medalForLap(track(prefs.track), best)?.toUpperCase() ?? "PERSONAL BEST"}`
       : "No lap record yet. Set your first time.";
+    const selectedVehicle = vehicleById(prefs.vehicle);
+    const selectedTune = tuneById(prefs.tune);
+    element.querySelector('[data-role="garage-wallet"]').textContent = `${prefs.credits.toLocaleString()} CR`;
+    const stats = loadoutStats(prefs.vehicle, prefs.tune);
     element.querySelector('[data-role="garage-colour-name"]').textContent = `${ColorNames[KartColors.indexOf(prefs.color)] ?? "CUSTOM"} / ${prefs.livery.toUpperCase()}`;
+    element.querySelector('[data-role="garage-model-name"]').textContent = `${selectedVehicle.name.toUpperCase()} · ${selectedTune.name.toUpperCase()} KIT`;
+    element.querySelector('[data-role="garage-class"]').textContent = selectedVehicle.className;
+    element.querySelector('[data-role="garage-tune-copy"]').textContent = `${selectedVehicle.description}. ${selectedTune.description}; saved and applied to your next race.`;
+    element.querySelector('[data-role="garage-stats"]').innerHTML = Object.entries({ SPEED: stats.speed, LAUNCH: stats.accel, GRIP: stats.handling, NITRO: stats.nitro }).map(([label, value]) => `<div class="garage-stat"><span>${label}</span><i><b style="width:${Math.min(100, Math.round(value / 1.15))}%"></b></i><strong>${value}</strong></div>`).join("");
     const garageKart = element.querySelector('[data-role="garage-kart"]');
     garageKart.style.setProperty("--kart-color", prefs.color);
     garageKart.dataset.livery = prefs.livery;
+    garageKart.dataset.vehicle = selectedVehicle.shape;
     renderRecords();
   };
   renderChoices();
@@ -2297,6 +2391,13 @@ function hideResults() {
 
 function showResults() {
   if (resultsEl) return;
+  if (!online && world && world.mode !== "trial" && !world.creditReward) {
+    const place = standings().indexOf(me) + 1;
+    const reward = ({ 1: 220, 2: 150, 3: 110, 4: 80 })[place] ?? 60;
+    world.creditReward = reward;
+    prefs.credits += reward;
+    savePrefs();
+  }
   hidePause();
   paused = false;
   const trial = world?.mode === "trial";
@@ -2379,6 +2480,12 @@ function fillResults() {
     const badge = document.createElement("span");
     badge.className = "badge ghost";
     badge.textContent = "New ghost saved";
+    recordLine.append(badge);
+  }
+  if (world.creditReward) {
+    const badge = document.createElement("span");
+    badge.className = "badge credits-badge";
+    badge.textContent = `+${world.creditReward} credits`;
     recordLine.append(badge);
   }
   const challenge = challengeForDate();
