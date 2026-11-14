@@ -66,25 +66,29 @@ export function createScenery(track) {
   const placed = []; // { x, y, r } footprints already taken
   const pick = (list) => list[Math.floor(rng() * list.length)];
 
-  const fits = (x, y, r, gap = 24) =>
+  // Candidate points are generated beside a known track sample. Passing
+  // that sample as a nearest-point hint avoids a full-loop scan for each object.
+  const fits = (x, y, r, gap = 24, hint = null) =>
     x > bounds.minX - 620 &&
     x < bounds.maxX + 620 &&
     y > bounds.minY - 620 &&
     y < bounds.maxY + 620 &&
-    nearest(track, x, y).dist > half + gap + r &&
+    nearest(track, x, y, hint).dist > half + gap + r &&
     placed.every((o) => Math.hypot(o.x - x, o.y - y) > (o.r + r) * 0.82);
 
   const reserve = (x, y, r) => placed.push({ x, y, r });
 
   // A point in the grass beside the road, at a chosen distance from the edge.
   function beside(minOffset, maxOffset) {
-    const s = samples[Math.floor(rng() * N)];
+    const idx = Math.floor(rng() * N);
+    const s = samples[idx];
     const side = rng() < 0.5 ? -1 : 1;
     const offset = half + minOffset + rng() * (maxOffset - minOffset);
     return {
       x: s.x - s.ty * side * offset + (rng() - 0.5) * 54,
       y: s.y + s.tx * side * offset + (rng() - 0.5) * 54,
       s,
+      idx,
     };
   }
 
@@ -93,7 +97,7 @@ export function createScenery(track) {
   for (let guard = 0; trees < 92 && guard < 4000; guard += 1) {
     const p = beside(110, 480);
     const r = 27 + rng() * 23;
-    if (!fits(p.x, p.y, r)) continue;
+    if (!fits(p.x, p.y, r, 24, p.idx)) continue;
     reserve(p.x, p.y, r * 0.8);
     const pineChance = theme === "forest" ? 0.62 : theme === "autumn" ? 0.22 : 0.34;
     const kind = rng() < pineChance ? "pine" : "tree";
@@ -114,7 +118,7 @@ export function createScenery(track) {
   for (let guard = 0; bushes < 64 && guard < 3000; guard += 1) {
     const p = beside(85, 340);
     const r = 13 + rng() * 9;
-    if (!fits(p.x, p.y, r, 14)) continue;
+    if (!fits(p.x, p.y, r, 14, p.idx)) continue;
     reserve(p.x, p.y, r * 0.9);
     objects.push({
       kind: "bush",
@@ -132,7 +136,7 @@ export function createScenery(track) {
   for (let guard = 0; rocks < 24 && guard < 2000; guard += 1) {
     const p = beside(95, 400);
     const r = 11 + rng() * 13;
-    if (!fits(p.x, p.y, r, 20)) continue;
+    if (!fits(p.x, p.y, r, 20, p.idx)) continue;
     reserve(p.x, p.y, r);
     objects.push({
       kind: "rock",
@@ -161,7 +165,7 @@ export function createScenery(track) {
       const offset = half + 34 + rng() * 20;
       const x = s.x - s.ty * side * offset;
       const y = s.y + s.tx * side * offset;
-      if (!fits(x, y, 15, 8)) continue;
+      if (!fits(x, y, 15, 8, corners[c])) continue;
       reserve(x, y, 15);
       objects.push({ kind: "tyres", x, y, r: 15, side, seed: rng() });
       stacks += 1;
@@ -192,7 +196,7 @@ export function createScenery(track) {
     ]) {
       const x = cx + dx * Math.cos(standAngle) - dy * Math.sin(standAngle);
       const y = cy + dx * Math.sin(standAngle) + dy * Math.cos(standAngle);
-      if (nearest(track, x, y).dist < half + 26) clear = false;
+      if (nearest(track, x, y, 0).dist < half + 26) clear = false;
     }
     if (!clear) continue;
     objects.push({
