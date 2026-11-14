@@ -107,7 +107,7 @@ function readPrefs() {
     tiltSens: readSens(saved),
     screenMode: saved.screenMode === "landscape" ? "landscape" : "auto",
     fullscreen: saved.fullscreen !== false,
-    camera: saved.camera === "fixed" ? "fixed" : "chase",
+    camera: ["fixed", "chase", "rear"].includes(saved.camera) ? saved.camera : "chase",
     flip: saved.flip === true,
     autoDrift: saved.autoDrift !== false,
     difficulty: DifficultyOptions.includes(saved.difficulty) ? saved.difficulty : "normal",
@@ -375,7 +375,7 @@ window.addEventListener("keydown", (event) => {
     toggleFullscreen();
   }
   if (event.code === "KeyC" && !event.repeat) {
-    prefs.camera = prefs.camera === "chase" ? "fixed" : "chase";
+    prefs.camera = ({ chase: "rear", rear: "fixed", fixed: "chase" })[prefs.camera] ?? "chase";
     savePrefs();
     applyControls();
   }
@@ -1294,7 +1294,7 @@ function showScreen(element) {
   screen.replaceChildren(element);
 }
 
-// "Camera" setting: behind the kart (road ahead is up) or a fixed map.
+// Camera setting: smooth follow, close rear view, or fixed map.
 function cameraGroup() {
   const group = document.createElement("div");
   group.className = "group";
@@ -1305,7 +1305,7 @@ function cameraGroup() {
   const render = () =>
     holder.replaceChildren(
       choice(
-        [{ value: "chase", text: "Behind the kart" }, { value: "fixed", text: "Fixed map" }],
+        [{ value: "chase", text: "Follow view" }, { value: "rear", text: "Close rear view" }, { value: "fixed", text: "Fixed map" }],
         prefs.camera,
         (value) => {
           prefs.camera = value;
@@ -1796,7 +1796,7 @@ function showMenu() {
       );
       element.querySelector('[data-slot="camera"]').replaceChildren(
         choice(
-          [{ value: "chase", text: "Behind the kart" }, { value: "fixed", text: "Fixed map" }],
+          [{ value: "chase", text: "Follow view" }, { value: "rear", text: "Close rear view" }, { value: "fixed", text: "Fixed map" }],
           prefs.camera,
           (value) => set("camera", value),
           "Camera",
