@@ -449,3 +449,129 @@ html.short .hud-box.right .nitro-status {
 .hero-secondary-actions{flex-wrap:wrap}.hero-secondary-actions button{flex:1 1 30%}
 
 .cup-overlay{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:16px;background:rgba(3,7,14,.62);overflow-y:auto}.cup-overlay .card{max-width:520px;width:100%}
+
+/* ---------- rooms: create / join, lobby ---------- */
+.online-picker{display:flex;flex-direction:column;gap:12px}
+.online-picker h1{margin:0}
+.join-box{display:flex;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--border);border-radius:14px;background:rgba(255,255,255,.03)}
+.join-row{display:flex;gap:8px;margin:0}
+.join-row input{min-width:0;flex:1;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--card-2);color:var(--text);font:800 26px/1 system-ui,sans-serif;letter-spacing:.35em;text-align:center}
+.join-row .big{flex:0 0 auto;padding:10px 22px}
+.join-error{margin:0;color:var(--bad);font-size:12px;text-align:center}
+.lobby-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.lobby-card .lobby-head h1{text-align:left;font-size:26px}
+.room-code{display:flex;flex-direction:column;align-items:flex-end;line-height:1}
+.room-code small{color:var(--soft);font-size:10px;font-weight:700;letter-spacing:.12em}
+.room-code strong{font:900 30px/1.05 system-ui,sans-serif;letter-spacing:.18em;color:#ffd35a;font-variant-numeric:tabular-nums}
+.invite-buttons{display:flex;gap:8px;flex:1 1 100%}
+.invite-buttons button{flex:1}
+.lobby-plan{display:flex;flex-direction:column;gap:8px}
+.lobby-plan .setup-field{display:flex;flex-direction:column;gap:4px}
+.lobby-leave{border:0;background:none;cursor:pointer;padding:6px 10px;font:inherit;font-size:13px;color:var(--soft)}
+.lobby-leave:hover{color:var(--bad)}
+
+/* ---------- phones held sideways (game area 520px tall or less) ----------
+   html.short is set by layout.js from the game's own size, so this also works
+   while the game is turned sideways with CSS. Everything important fits on one
+   screen; only long lists scroll, inside their own panel. */
+html.short #screen{padding:4px}
+html.short .card.menu-card{width:100%;height:calc(var(--vh,1vh)*100 - 8px);border-radius:14px}
+html.short .menu-topbar{display:flex;min-height:0;gap:8px;padding:5px 10px;flex-wrap:nowrap}
+html.short .brand-mark{width:28px;height:28px;font-size:18px;border-radius:9px 9px 9px 3px}
+html.short .brand-copy small{display:none}
+html.short .brand-copy strong{font-size:12px}
+html.short .menu-nav{flex:1;min-width:0;margin:0;padding:0;gap:2px;overflow-x:auto;justify-content:center;scrollbar-width:none}
+html.short .menu-tab{min-height:30px;padding:0 9px;font-size:11px;white-space:nowrap}
+html.short .menu-tab span{display:none}
+html.short .menu-online-indicator{display:none}
+html.short .menu-top-actions{gap:6px}
+html.short .menu-install{padding:6px 8px;font-size:9px}
+html.short .menu-footer{display:none}
+html.short .menu-page{padding:8px 10px}
+/* home */
+html.short .home-layout{grid-template-columns:minmax(0,1.5fr) minmax(190px,.7fr);gap:8px;min-height:0}
+html.short .menu-hero{min-height:0;padding:12px 14px;border-radius:14px}
+html.short .hero-topline,html.short .hero-kicker,html.short .hero-copy>p,html.short .hero-track-stamp,html.short .hero-bottom-line,html.short .home-footer-stats{display:none}
+html.short .hero-copy{margin:0}
+html.short .hero-copy h1{margin:0 0 6px;font-size:28px;line-height:.92}
+html.short .hero-copy h1 br{display:none}
+html.short .hero-copy h1 em{margin-left:.25em}
+html.short .hero-selected-track{margin:0 0 8px;font-size:9px}
+html.short .hero-cta{width:100%;min-height:40px}
+html.short .hero-secondary-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex-direction:row;gap:6px;margin-top:6px}
+html.short .hero-secondary-actions button{min-height:0;padding:6px 8px;gap:6px}
+html.short .hero-secondary-actions button>b,html.short .hero-secondary-actions small{display:none}
+html.short .hero-secondary-actions strong{font-size:10px}
+html.short .action-icon{width:24px;height:24px;flex:0 0 auto}
+html.short .home-sidebar{display:flex;flex-direction:column;gap:6px}
+html.short .menu-side-card{padding:10px 12px}
+html.short .daily-side-card{grid-row:auto}
+html.short .daily-side-card h2{margin:6px 0 4px;font-size:16px}
+
+html.short .daily-side-card>p{display:none}
+html.short .daily-card{padding:8px 10px}
+html.short .track-side-card{min-height:0}
+html.short .track-side-card>strong{margin:4px 0 2px;font-size:14px}
+html.short .track-side-card .record{margin:0 0 4px}
+html.short .garage-side-card{display:none}
+/* page headings */
+html.short .page-heading{margin-bottom:8px;align-items:center}
+html.short .page-heading .eyebrow,html.short .page-heading p,html.short .page-index{display:none}
+html.short .page-heading h1{margin:0;font-size:22px}
+html.short .menu-panel{padding:10px 12px;border-radius:12px}
+html.short .panel-heading{padding-bottom:6px}
+html.short .panel-heading>span:last-child{display:none}
+/* tracks */
+html.short .tracks-layout{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+html.short .track-choice-slot{margin:8px 0}
+html.short .track-choice-slot .choices button{min-height:52px;padding:6px}
+html.short .selected-track-record{padding:7px 10px}
+html.short .race-setup-panel{gap:7px}
+html.short .setup-field{gap:4px}
+html.short .setup-field .choices button{min-height:32px;padding:5px 8px}
+html.short .setup-note{display:none}
+html.short .panel-primary-action{min-height:38px}
+/* garage */
+html.short .garage-layout,html.short .garage-layout.garage-3d{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+html.short .garage-showcase,html.short .garage-stage{min-height:0;height:calc(var(--vh,1vh)*100 - 110px);padding:10px}
+html.short .garage-options{gap:8px;max-height:calc(var(--vh,1vh)*100 - 110px);overflow-y:auto}
+html.short .garage-tab-body{max-height:none}
+html.short .garage-tip{display:none}
+html.short .garage-options>.panel-primary-action{display:none}
+/* records */
+html.short .records-summary{gap:6px;margin-bottom:8px}
+html.short .records-summary>div{padding:8px 10px;gap:3px}
+html.short .records-summary strong{font-size:18px}
+html.short .records-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+html.short .record-track-card{min-height:0;padding:10px}
+/* settings */
+html.short .settings-layout{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+html.short .settings-intro{margin:6px 0}
+html.short .control-guide-row{padding:6px 0}
+/* every pop-up card (room, results, pause, cups) fits the screen */
+html.short .card:not(.menu-card){max-height:calc(var(--vh,1vh)*100 - 10px);overflow-y:auto;gap:7px;padding:12px 14px;border-radius:16px}
+html.short .card:not(.menu-card) h1{font-size:20px}
+html.short .big{padding:9px 12px}
+html.short .big span{font-size:11px}
+html.short .cup-overlay{padding:5px}
+html.short .cup-list{gap:6px}
+html.short .cup-option{padding:8px 10px}
+html.short .results li{padding-top:5px;padding-bottom:5px}
+html.short .room-code strong{font-size:24px}
+html.short .lobby-card{width:min(560px,100%)}
+html.short .lobby-plan{flex-direction:row;gap:10px}
+html.short .lobby-plan .setup-field:first-child{flex:1}
+html.short .join-row input{font-size:22px;padding:7px 10px}
+/* the active tab already names the page */
+html.short .page-heading{display:none}
+html.short .garage-showcase,html.short .garage-stage{height:calc(var(--vh,1vh)*100 - 76px)}
+html.short .garage-options{max-height:calc(var(--vh,1vh)*100 - 76px)}
+html.short .settings-layout .mobile-settings{order:-1}
+html.short .card.pause-card{width:min(700px,100%)}
+html.short .pause-sub{display:none}
+html.short .pause-context>div{padding:5px 8px}
+html.short .pause-resume{min-height:40px}
+html.short .pause-adjustments{padding:8px}
+/* in the race on a phone: keep the fuel bar, drop the tiny help text */
+html.short .hud-box.right .nitro-help,html.short .hud-box.right .nitro-status{display:none}
+html.short .nitro-widget{min-width:96px}

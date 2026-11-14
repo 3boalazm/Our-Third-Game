@@ -93,12 +93,17 @@ const BotSkills = {
   normal: [0.79, 0.84, 0.89],
   hard: [0.90, 0.96, 1.02],
 };
-// Tilt sensitivity is a number from 1 (calm) to 10 (twitchy). It sets how many
-// degrees of tilt give full steering lock: 6 is about 24 degrees.
-const SensMin = 1;
+// Tilt sensitivity goes from 0 to 10 with 5 in the middle. Right of 5 the
+// steering gets lighter (less tilt for full lock), left of 5 heavier.
+// It sets how many degrees of tilt give full lock: 5 is 40 degrees,
+// 0 is 65 and 10 is 20.
+const SensMin = 0;
 const SensMax = 10;
-const SensDefault = 6;
-const tiltRangeFor = (sens) => 44 - 3.4 * sens;
+const SensDefault = 5;
+function tiltRangeFor(sens) {
+  const level = Math.max(SensMin, Math.min(SensMax, sens));
+  return level <= 5 ? 40 + (5 - level) * 5 : 40 - (level - 5) * 4;
+}
 const CountdownSeconds = 3.2;
 const SendEverySeconds = 0.05;
 
@@ -107,13 +112,15 @@ const SendEverySeconds = 0.05;
 const params = new URLSearchParams(window.location.search);
 const RoomPattern = /^\d{4}$/;
 
-// Older versions stored low / normal / high.
+// The 0..10 scale is stored as steerFeel. Older 1..10 values (tiltSens) are
+// dropped on purpose: the old scale was much twitchier, so everyone starts
+// again from the middle.
 function readSens(saved) {
-  const n = Number(saved.tiltSens);
+  const n = Number(saved.steerFeel);
   if (Number.isFinite(n) && n >= SensMin && n <= SensMax) {
     return Math.round(n);
   }
-  return { low: 3, normal: 6, high: 9 }[saved.sensitivity] ?? SensDefault;
+  return SensDefault;
 }
 
 function readRecords(raw) {
@@ -142,7 +149,7 @@ function readPrefs() {
     tipSeen: saved.tipSeen === true,
     // phone controls
     steer: saved.steer === "buttons" ? "buttons" : "tilt",
-    tiltSens: readSens(saved),
+    steerFeel: readSens(saved),
     screenMode: saved.screenMode === "landscape" ? "landscape" : "auto",
     fullscreen: saved.fullscreen !== false,
     // everybody starts once on the new 3D view (cam3d marks prefs saved after it arrived)
@@ -203,12 +210,54 @@ function savePrefs() {
   }
 }
 
+// The room you are in is remembered, so the two of you stay together whatever
+// happens: a reload, the phone locking, the browser being closed and opened
+// again, going back from the results... Only "Leave room" takes you out.
+const RoomSaveKey = "kart-room";
+const RoomKeepMs = 45 * 60 * 1000; // a room nobody touched for this long is forgotten
+
+function readSavedRoom() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(RoomSaveKey) ?? "null");
+    if (
+      saved &&
+      (saved.role === "host" || saved.role === "guest") &&
+      RoomPattern.test(saved.room ?? "") &&
+      Date.now() - Number(saved.at) < RoomKeepMs
+    ) {
+      return saved;
+    }
+  } catch {
+    // storage blocked or broken
+  }
+  return null;
+}
+
+function saveRoom(role, room) {
+  try {
+    localStorage.setItem(RoomSaveKey, JSON.stringify({ role, room, at: Date.now() }));
+  } catch {
+    // storage blocked
+  }
+}
+
+function forgetRoom() {
+  try {
+    localStorage.removeItem(RoomSaveKey);
+  } catch {
+    // storage blocked
+  }
+}
+
 const roomParam = params.get("room");
+const savedRoom = params.has("room") || params.has("online") ? null : readSavedRoom();
 const online = RoomPattern.test(roomParam ?? "")
   ? { role: "guest", room: roomParam }
   : params.get("online") === "host"
     ? { role: "host", room: RoomPattern.test(params.get("id") ?? "") ? params.get("id") : null }
-    : null;
+    : savedRoom
+      ? { role: savedRoom.role, room: savedRoom.room, resumed: true }
+      : null;
 
 // ---------- page skeleton ----------
 
@@ -459,7 +508,7 @@ bindInput(touchEl, {
 // Apply the phone control settings (steering mode, sensitivity, auto-drift).
 function applyControls() {
   setControls({ steer: prefs.steer, autoDrift: prefs.autoDrift });
-  setTiltOptions({ range: tiltRangeFor(prefs.tiltSens), flip: prefs.flip });
+  setTiltOptions({ range: tiltRangeFor(prefs.steerFeel), flip: prefs.flip });
   driftButton.hidden = prefs.autoDrift;
   setForceLandscape(prefs.screenMode === "landscape");
   setPadBindings(prefs.padBindings);
@@ -500,7 +549,6 @@ muteButton.addEventListener("click", () => {
   renderMute();
 });
 pauseButton.addEventListener("click", () => togglePause());
-tiltResetButton.addEventListener("click", resetGyroCalibration);
 photoEl.querySelector('[data-act="photo-exit"]').addEventListener("click", exitPhotoMode);
 photoEl.querySelector('[data-act="photo-save"]').addEventListener("click", savePhoto);
 replayEl.querySelector('[data-act="replay-exit"]').addEventListener("click", exitReplay);
@@ -1134,7 +1182,6 @@ function update(dt, now) {
     if (world.countdown <= 0) {
       world.state = "racing";
       world.goFlash = 0.9;
-      recenterTilt(); // however you are holding the phone right now is "straight"
       if (isTouchDevice && prefs.steer === "tilt" && !usingTilt()) {
         toastText = "Tilt not available: use the arrows";
         toastUntil = performance.now() + 2500;
@@ -1328,7 +1375,7 @@ function updateHud() {
   const tilting = usingTilt();
   document.body.dataset.steer = tilting ? "tilt" : "buttons";
   tiltGauge.hidden = !tilting;
-  tiltResetButton.hidden = !(isTouchDevice && prefs.steer === "tilt");
+  tiltResetButton.hidden = true; // the centre is the phone's true level now
   if (tilting) {
     tiltGauge.firstElementChild.style.left = `${50 + steerNow() * 50}%`;
   }
@@ -1417,7 +1464,13 @@ function cameraGroup() {
 }
 
 // A labelled range slider. onInput runs while dragging, onChange when released.
-function slider({ min, max, value, label, onInput, onChange }) {
+// "5 · Medium" for the steering feel slider.
+function feelText(value) {
+  if (value === 5) return "5 · Medium";
+  return `${value} · ${value < 5 ? "Heavier" : "Lighter"}`;
+}
+
+function slider({ min, max, value, label, onInput, onChange, ends = null, describe = null }) {
   const row = document.createElement("div");
   row.className = "slider";
   const input = document.createElement("input");
@@ -1428,14 +1481,24 @@ function slider({ min, max, value, label, onInput, onChange }) {
   input.value = String(value);
   input.setAttribute("aria-label", label);
   const out = document.createElement("output");
-  out.textContent = `${value}/${max}`;
+  const text = (n) => (describe ? describe(n) : `${n}/${max}`);
+  out.textContent = text(value);
   input.addEventListener("input", () => {
     const next = Number(input.value);
-    out.textContent = `${next}/${max}`;
+    out.textContent = text(next);
     onInput(next);
   });
   input.addEventListener("change", () => onChange?.(Number(input.value)));
-  row.append(input, out);
+  if (ends) {
+    row.classList.add("with-ends");
+    const left = document.createElement("small");
+    left.textContent = ends[0];
+    const right = document.createElement("small");
+    right.textContent = ends[1];
+    row.append(left, input, right, out);
+  } else {
+    row.append(input, out);
+  }
   return row;
 }
 
@@ -1577,7 +1640,6 @@ function showMenu() {
               <div class="setup-field"><span class="field-label">STEERING</span><div data-slot="steer"></div></div>
               <div class="setup-field" data-tilt-only><span class="field-label">TILT SENSITIVITY</span><div data-slot="sens"></div></div>
               <div class="setup-field" data-tilt-only><span class="field-label">TILT DIRECTION</span><div data-slot="flip"></div></div>
-              <div class="setup-field" data-tilt-only><span class="field-label">GYRO CENTER</span><div data-slot="calibrate"></div></div>
               <div class="setup-field"><span class="field-label">DRIFT</span><div data-slot="drift"></div></div>
               <div class="setup-field"><span class="field-label">CAMERA</span><div data-slot="camera"></div></div>
               <div class="setup-field"><span class="field-label">SCREEN ORIENTATION</span><div data-slot="screen"></div></div>
@@ -1934,7 +1996,7 @@ function showMenu() {
     element.querySelector('[data-role="hero-track-stamp"]').textContent = selectedTrack.name.toUpperCase();
     element.querySelector('[data-role="track-preview-name"]').textContent = selectedTrack.name;
     element.querySelector('[data-role="menu-hero"]').dataset.track = selectedTrack.id;
-    element.querySelector('[data-role="hero-meta"]').textContent = `${prefs.laps} LAPS · ${prefs.difficulty.toUpperCase()} · ${WeatherOptions.find((item) => item.id === prefs.weather)?.label.toUpperCase() ?? "CLEAR"}`;
+    element.querySelector('[data-role="hero-meta"]').textContent = `${prefs.laps} LAP${prefs.laps > 1 ? "S" : ""} · ${prefs.difficulty.toUpperCase()} · ${WeatherOptions.find((item) => item.id === prefs.weather)?.label.toUpperCase() ?? "CLEAR"}`;
     const best = recordFor(prefs.track);
     element.querySelector('[data-role="track-record-summary"]').textContent = best
       ? `${formatTime(best)} · ${medalForLap(track(prefs.track), best)?.toUpperCase() ?? "PERSONAL BEST"}`
@@ -1963,10 +2025,12 @@ function showMenu() {
         slider({
           min: SensMin,
           max: SensMax,
-          value: prefs.tiltSens,
+          value: prefs.steerFeel,
           label: "Tilt sensitivity",
+          ends: ["Heavy", "Light"],
+          describe: feelText,
           onInput: (value) => {
-            prefs.tiltSens = value;
+            prefs.steerFeel = value;
             applyControls();
           },
           onChange: savePrefs,
@@ -1980,12 +2044,6 @@ function showMenu() {
           "Tilt direction",
         ),
       );
-      const calibrate = document.createElement("button");
-      calibrate.type = "button";
-      calibrate.className = "gyro-calibrate-action";
-      calibrate.textContent = "↺ RESET GYRO CENTER";
-      calibrate.addEventListener("click", resetGyroCalibration);
-      element.querySelector('[data-slot="calibrate"]').replaceChildren(calibrate);
       element.querySelector('[data-slot="drift"]').replaceChildren(
         choice(
           [{ value: true, text: "Automatic" }, { value: false, text: "Button" }],
@@ -2060,14 +2118,101 @@ function showMenu() {
   element.querySelector('[data-role="cups-sub"]').textContent = golds
     ? `${golds} of ${Cups.length} cups won`
     : "Three cups. Win them all.";
-  element.querySelector('[data-act="online"]').addEventListener("click", () => {
-    window.location.href = `${window.location.pathname}?online=host&laps=${prefs.laps}&track=${prefs.track}`;
-  });
+  element.querySelector('[data-act="online"]').addEventListener("click", showOnlinePicker);
   showScreen(element);
 }
 
 function inviteUrl() {
   return `${window.location.origin}${window.location.pathname}?room=${session.roomId}`;
+}
+
+// "Race a friend": make a room, or type the 4-digit code of a friend's room.
+function showOnlinePicker() {
+  const panel = card(`
+    <div class="online-picker">
+      <span class="eyebrow">RACE A FRIEND</span>
+      <h1>Play together</h1>
+      <button type="button" class="big primary" data-act="create"><strong>Create a room</strong><span>Get a code and a link to send</span></button>
+      <div class="join-box">
+        <span class="field-label">HAVE A CODE?</span>
+        <form class="join-row" data-role="join">
+          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="0000" aria-label="Room code">
+          <button type="submit" class="big">Join</button>
+        </form>
+        <p class="join-error" data-role="error" hidden>Type the 4 digits of the room code.</p>
+      </div>
+      <button type="button" class="big" data-act="close">Back</button>
+    </div>
+  `);
+  panel.classList.add("results-card");
+  const wrap = document.createElement("div");
+  wrap.className = "overlay cup-overlay";
+  wrap.append(panel);
+  const close = () => wrap.remove();
+  wrap.addEventListener("click", (event) => {
+    if (event.target === wrap) close();
+  });
+  panel.querySelector('[data-act="close"]').addEventListener("click", close);
+  panel.querySelector('[data-act="create"]').addEventListener("click", () => {
+    window.location.href = `${window.location.pathname}?online=host&laps=${prefs.laps}&track=${prefs.track}`;
+  });
+  const form = panel.querySelector('[data-role="join"]');
+  const input = form.querySelector("input");
+  const error = panel.querySelector('[data-role="error"]');
+  input.addEventListener("input", () => {
+    input.value = input.value.replace(/\D/g, "").slice(0, 4);
+    error.hidden = true;
+  });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const code = input.value.trim();
+    if (!RoomPattern.test(code)) {
+      error.hidden = false;
+      input.focus();
+      return;
+    }
+    window.location.href = `${window.location.pathname}?room=${code}`;
+  });
+  screen.append(wrap);
+}
+
+// Back to the room's lobby from a race, the pause menu or the results,
+// without leaving the room.
+function backToRoom() {
+  if (!online) return;
+  if (remote && world && world.state !== "demo") {
+    session?.send({ t: "lobby" });
+  }
+  clearInterval(goTimer);
+  hidePause();
+  paused = false;
+  resultsEl = null;
+  showLobby();
+}
+
+// The only way out of a room.
+function leaveRoom() {
+  forgetRoom();
+  session?.send({ t: "bye" });
+  setTimeout(() => {
+    session?.destroy();
+    window.location.href = window.location.pathname;
+  }, 150);
+}
+
+// What the host has picked for the next race (the guest shows it).
+let roomPlan = null;
+
+function sendRoomPlan() {
+  if (online?.role === "host" && session) {
+    session.send({ t: "room", track: prefs.track, laps: prefs.laps });
+    // keep the address in step, so a reload keeps the host's choice
+    window.history.replaceState(
+      null,
+      "",
+      `?online=host&id=${session.roomId}&laps=${prefs.laps}&track=${prefs.track}`,
+    );
+  }
 }
 
 const netText = {
@@ -2087,22 +2232,81 @@ function showLobby() {
   startDemo(prefs.track);
 
   const element = card(`
-    <h1>${isHost ? "Invite a friend" : "Joining a race"}</h1>
-    <p class="sub" data-role="info"></p>
+    <div class="lobby-head">
+      <h1>${isHost ? "Your room" : "Friend's room"}</h1>
+      <div class="room-code"><small>ROOM CODE</small><strong data-role="code"></strong></div>
+    </div>
     <p class="status" data-role="status"></p>
+    <div class="invite" data-role="invite" hidden>
+      <input type="text" readonly aria-label="Invite link">
+      <div class="invite-buttons">
+        <button type="button" data-role="copy-code">Copy code</button>
+        <button type="button" data-role="copy">Copy link</button>
+        <button type="button" data-role="share" hidden>Share</button>
+      </div>
+    </div>
+    <div class="lobby-plan" data-role="plan" hidden>
+      <div class="setup-field"><span class="field-label">TRACK</span><div data-slot="lobby-track"></div></div>
+      <div class="setup-field"><span class="field-label">LAPS</span><div data-slot="lobby-laps"></div></div>
+    </div>
+    <p class="sub" data-role="info"></p>
     <div class="tilt-row" data-role="tilt" hidden>
       <span></span>
       <button type="button">Turn on tilt steering</button>
     </div>
-    <div class="invite" data-role="invite" hidden>
-      <input type="text" readonly aria-label="Invite link">
-      <button type="button" data-role="copy">Copy link</button>
-      <button type="button" data-role="share" hidden>Share</button>
-    </div>
     <button type="button" class="big primary" data-act="start" hidden><strong>Start race</strong><span>Both players are ready</span></button>
-    <a class="footer" data-role="menu">&larr; Menu</a>
+    <button type="button" class="footer lobby-leave" data-act="leave">Leave room</button>
   `);
-  element.querySelector('[data-role="menu"]').href = window.location.pathname;
+  element.classList.add("lobby-card");
+  const leave = element.querySelector('[data-act="leave"]');
+  let leaveArmed = 0;
+  leave.addEventListener("click", () => {
+    if (Date.now() - leaveArmed < 3000) {
+      leaveRoom();
+      return;
+    }
+    leaveArmed = Date.now();
+    leave.textContent = "Tap again to leave the room";
+    setTimeout(() => {
+      if (leave.isConnected) leave.textContent = "Leave room";
+    }, 3000);
+  });
+  const plan = element.querySelector('[data-role="plan"]');
+  const renderPlan = () => {
+    plan.querySelector('[data-slot="lobby-track"]').replaceChildren(
+      choice(
+        Tracks.map((tr) => ({ value: tr.id, text: tr.name })),
+        prefs.track,
+        (value) => {
+          prefs.track = value;
+          savePrefs();
+          startDemo(value);
+          renderPlan();
+          sendRoomPlan();
+          lobbyRefresh();
+        },
+        "Track",
+      ),
+    );
+    plan.querySelector('[data-slot="lobby-laps"]').replaceChildren(
+      choice(
+        LapOptions.map((n) => ({ value: n, text: String(n) })),
+        prefs.laps,
+        (value) => {
+          prefs.laps = value;
+          savePrefs();
+          renderPlan();
+          sendRoomPlan();
+          lobbyRefresh();
+        },
+        "Laps",
+      ),
+    );
+  };
+  if (isHost) {
+    plan.hidden = false;
+    renderPlan();
+  }
   const status = element.querySelector('[data-role="status"]');
   const info = element.querySelector('[data-role="info"]');
   const invite = element.querySelector('[data-role="invite"]');
@@ -2131,18 +2335,41 @@ function showLobby() {
             : "Tilt steering needs your OK";
       tiltRow.querySelector("button").hidden = ready || unavailable || status === "denied";
     }
-    status.textContent = netState === "error" ? netDetail || "Connection problem." : netText[netState] ?? "";
+    status.textContent =
+      netState === "error"
+        ? netDetail || "Connection problem."
+        : !isHost && netState === "connecting"
+          ? `Looking for room ${session?.roomId ?? ""}... Ask your friend to keep the room open.`
+          : netText[netState] ?? "";
     status.dataset.state = netState;
+    element.querySelector('[data-role="code"]').textContent = session?.roomId ?? "----";
+    const lapsText = (n) => `${n} lap${n > 1 ? "s" : ""}`;
     info.textContent = isHost
-      ? `${trackById(prefs.track).name} · ${prefs.laps} lap${prefs.laps > 1 ? "s" : ""} · Room ${session?.roomId ?? ""}`
-      : "The host picks the track and starts the race.";
-    invite.hidden = !(isHost && (netState === "waiting" || netState === "away"));
+      ? netState === "connected"
+        ? "You pick the track. Press Start when you're both ready."
+        : "Send the code or the link. You stay in this room between races."
+      : roomPlan
+        ? `Next race: ${trackById(roomPlan.track).name} · ${lapsText(roomPlan.laps)}. The host starts it.`
+        : "The host picks the track and starts the race.";
+    invite.hidden = !(isHost && netState !== "connected");
     startButton.hidden = !(isHost && netState === "connected");
     if (session && isHost) {
       input.value = inviteUrl();
     }
   };
 
+  const copyCode = invite.querySelector('[data-role="copy-code"]');
+  copyCode.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(session?.roomId ?? "");
+      copyCode.textContent = "Copied!";
+      setTimeout(() => {
+        copyCode.textContent = "Copy code";
+      }, 1800);
+    } catch {
+      // the code is on screen in big digits anyway
+    }
+  });
   const copy = invite.querySelector('[data-role="copy"]');
   copy.addEventListener("click", async () => {
     try {
@@ -2160,7 +2387,9 @@ function showLobby() {
     const share = invite.querySelector('[data-role="share"]');
     share.hidden = false;
     share.addEventListener("click", () => {
-      navigator.share({ title: "Kart Race", url: input.value }).catch(() => {});
+      navigator
+        .share({ title: "Kart Race", text: `Race me in Kart Race! Room code ${session?.roomId ?? ""}`, url: input.value })
+        .catch(() => {});
     });
   }
   startButton.addEventListener("click", () => {
@@ -2179,6 +2408,7 @@ function showLobby() {
 let currentRaceId = 0;
 let goAcked = 0;
 let goTimer = null;
+let lastGo = null;
 
 function hostStartsRace() {
   if (online?.role !== "host" || netState !== "connected") {
@@ -2186,6 +2416,7 @@ function hostStartsRace() {
   }
   const message = { t: "go", id: Date.now(), track: prefs.track, laps: prefs.laps };
   currentRaceId = message.id;
+  lastGo = message;
   startOnlineRace(prefs.track, prefs.laps);
   clearInterval(goTimer);
   let tries = 0;
@@ -2350,37 +2581,6 @@ function savePhoto() {
   link.remove();
 }
 
-function resetGyroCalibration() {
-  if (!isTouchDevice || prefs.steer !== "tilt") return;
-  if (!tiltSupported()) {
-    showToast("MOTION SENSOR UNAVAILABLE · USE ARROWS", "warm", 1500);
-    return;
-  }
-  if (tiltStatus() === "denied") {
-    showToast("MOTION ACCESS BLOCKED · CHECK BROWSER SETTINGS", "warm", 1700);
-    return;
-  }
-
-  const finish = () => {
-    const centeredNow = recenterTilt();
-    resetInput();
-    showToast(
-      centeredNow ? "GYRO CENTERED · READY TO DRIVE" : "GYRO RESETTING · HOLD PHONE STEADY",
-      "good",
-      1400,
-    );
-  };
-
-  if (tiltStatus() === "granted") {
-    finish();
-    return;
-  }
-  enableTilt().then((status) => {
-    if (status === "granted") finish();
-    else showToast("TILT NOT AVAILABLE · USE ARROWS", "warm", 1500);
-  });
-}
-
 function showPause() {
   if (pauseEl || resultsEl || !world || !["racing", "countdown"].includes(world.state)) {
     return;
@@ -2404,13 +2604,20 @@ function showPause() {
       ${solo && replayBuffer.length >= 20 ? `<button type="button" class="big pause-action" data-act="replay"><strong>Replay last 10 s</strong><span>Watch the action again</span></button>` : ""}
       ${solo ? `<button type="button" class="big pause-action" data-act="photo"><strong>Photo mode</strong><span>Capture your best angle</span></button>` : ""}
       ${solo ? `<button type="button" class="big pause-action" data-act="restart"><strong>Restart ${world.mode === "trial" ? "time trial" : "race"}</strong><span>Start this session over</span></button>` : ""}
-      ${isTouchDevice && prefs.steer === "tilt" ? `<button type="button" class="big pause-action" data-act="recenter"><strong>Reset gyro center</strong><span>Hold the phone comfortably straight, then tap</span></button>` : ""}
     </div>
     <div class="pause-adjustments"><span class="pause-adjust-label">QUICK SETTINGS</span></div>
-    <a class="pause-quit" data-role="menu">${solo ? "Quit to menu" : "Leave race"} <b>↗</b></a>
+    <a class="pause-quit" data-role="menu" href="#">${solo ? "Quit to menu" : "Back to room"} <b>↗</b></a>
   `);
   panel.classList.add("pause-card");
-  panel.querySelector('[data-role="menu"]').href = window.location.pathname;
+  const pauseQuit = panel.querySelector('[data-role="menu"]');
+  if (online) {
+    pauseQuit.addEventListener("click", (event) => {
+      event.preventDefault();
+      backToRoom();
+    });
+  } else {
+    pauseQuit.href = window.location.pathname;
+  }
 
   const adjustments = panel.querySelector(".pause-adjustments");
   if (isTouchDevice && prefs.steer === "tilt") {
@@ -2424,10 +2631,12 @@ function showPause() {
       slider({
         min: SensMin,
         max: SensMax,
-        value: prefs.tiltSens,
+        value: prefs.steerFeel,
         label: "Tilt sensitivity",
+        ends: ["Heavy", "Light"],
+        describe: feelText,
         onInput: (value) => {
-          prefs.tiltSens = value;
+          prefs.steerFeel = value;
           applyControls();
         },
         onChange: savePrefs,
@@ -2440,10 +2649,6 @@ function showPause() {
   adjustments.append(camera);
 
   panel.querySelector('[data-act="resume"]').addEventListener("click", () => togglePause());
-  panel.querySelector('[data-act="recenter"]')?.addEventListener("click", () => {
-    resetGyroCalibration();
-    togglePause();
-  });
   panel.querySelector('[data-act="replay"]')?.addEventListener("click", enterReplay);
   panel.querySelector('[data-act="photo"]')?.addEventListener("click", enterPhotoMode);
   panel.querySelector('[data-act="restart"]')?.addEventListener("click", () => {
@@ -2778,12 +2983,22 @@ function showResults() {
     <p class="hint" data-role="note"></p>
   `);
   panel.classList.add("results-card");
-  panel.querySelector('[data-role="menu"]').href = window.location.pathname;
+  const resultsMenu = panel.querySelector('[data-role="menu"]');
+  if (online) {
+    resultsMenu.textContent = "Back to room";
+    resultsMenu.href = "#";
+    resultsMenu.addEventListener("click", (event) => {
+      event.preventDefault();
+      backToRoom();
+    });
+  } else {
+    resultsMenu.href = window.location.pathname;
+  }
   const again = panel.querySelector('[data-act="again"]');
   if (online && online.role === "guest") {
     again.disabled = true;
     again.textContent = "Waiting for host";
-    panel.querySelector('[data-role="note"]').textContent = "The host can start a rematch.";
+    panel.querySelector('[data-role="note"]').textContent = "You're still in the room. The host starts the next race.";
   } else {
     again.textContent = world?.cup && cupRun
       ? isFinished(cupRun.run) ? "See the podium" : `Next race (${cupRun.run.round + 1}/3)`
@@ -2929,6 +3144,29 @@ function handleMessage(message) {
     }
   } else if (message.t === "goack") {
     goAcked = message.id;
+  } else if (message.t === "room" && online?.role === "guest") {
+    if (Tracks.some((tr) => tr.id === message.track) && LapOptions.includes(message.laps)) {
+      roomPlan = { track: message.track, laps: message.laps };
+      if (world?.state === "demo" && prefs.track !== message.track) {
+        prefs.track = message.track;
+        startDemo(message.track);
+      }
+      lobbyRefresh();
+    }
+  } else if (message.t === "hello" && online?.role === "host") {
+    // The friend (re)joined: tell them the plan, and let them into a race that
+    // is still running instead of leaving them alone in the lobby.
+    sendRoomPlan();
+    const racing = remote && world && ["racing", "countdown"].includes(world.state);
+    if (racing && lastGo && message.race !== lastGo.id) {
+      session.send(lastGo);
+    }
+  } else if (message.t === "lobby") {
+    showToast("FRIEND WENT BACK TO THE ROOM", "warm", 2200);
+  } else if (message.t === "bye") {
+    netState = "away";
+    lobbyRefresh();
+    showToast("FRIEND LEFT THE ROOM", "warm", 2400);
   } else if (message.t === "s" && remote && world?.state !== "demo") {
     if ([message.x, message.y, message.a, message.v, message.p].every(Number.isFinite)) {
       remote.target = {
@@ -2964,30 +3202,41 @@ function handleMessage(message) {
 
 if (online) {
   let roomId = online.room ?? createRoomId();
-  if (online.role === "host") {
+  const showRoomInUrl = () =>
     window.history.replaceState(
       null,
       "",
-      `?online=host&id=${roomId}&laps=${prefs.laps}&track=${prefs.track}`,
+      online.role === "host"
+        ? `?online=host&id=${roomId}&laps=${prefs.laps}&track=${prefs.track}`
+        : `?room=${roomId}`,
     );
-  }
+  showRoomInUrl();
+  saveRoom(online.role, roomId);
+  // keep the saved room fresh while the page is open
+  setInterval(() => saveRoom(online.role, roomId), 20000);
   session = createOnlineSession({
     role: online.role,
     roomId,
     onStatus(state, detail) {
+      if (state === "error" && /two players|another player/.test(detail)) {
+        forgetRoom(); // this room can't be ours any more
+      }
       netState = state;
       netDetail = detail;
       lobbyRefresh();
     },
-    onOpen() {},
+    onOpen() {
+      if (online.role === "guest") {
+        session?.send({ t: "hello", race: currentRaceId });
+      } else {
+        sendRoomPlan();
+      }
+    },
     onMessage: handleMessage,
     onRoomChange(next) {
       roomId = next;
-      window.history.replaceState(
-        null,
-        "",
-        `?online=host&id=${next}&laps=${prefs.laps}&track=${prefs.track}`,
-      );
+      showRoomInUrl();
+      saveRoom(online.role, roomId);
       lobbyRefresh();
     },
   });

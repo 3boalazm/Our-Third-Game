@@ -60,3 +60,8 @@ test("gyro direction can be flipped and remains clamped", () => {
   assert.equal(tiltSteerTarget(100, 0, 24), 1);
   assert.equal(tiltSteerTarget(-100, 0, 24), -1);
 });
+
+test("a level phone (zero degrees) always drives straight", () => {
+  near(tiltSteerTarget(0, 0), 0, "level");
+  near(tiltSteerTarget(1.5, 0), 0, "tiny wobble");
+});

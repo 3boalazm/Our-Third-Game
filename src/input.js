@@ -68,6 +68,8 @@ const tilt = {
   status: "idle", // idle | granted | denied | unsupported
   listening: false,
   raw: 0, // degrees, filtered
+  // "Straight" is always the phone's true level (screen's right edge neither up
+  // nor down), never however the phone happened to be held when the race began.
   neutral: 0,
   lastEvent: 0,
   lastBeta: null,
@@ -127,9 +129,8 @@ function onOrientation(event) {
   const degrees = tiltFromGravity(event.beta, event.gamma, screenAngle());
 
   if (tilt.recenterPending) {
-    // First fresh sample after a screen rotation becomes the new neutral pose.
+    // First fresh sample after a screen rotation: start the smoothing from it.
     tilt.raw = degrees;
-    tilt.neutral = degrees;
     tilt.samples = [degrees];
     tilt.recenterPending = false;
     steerValue = 0;
@@ -164,13 +165,12 @@ export async function enableTilt() {
   return tilt.status;
 }
 
+// Clears the steering that has built up. The centre itself stays the phone's
+// true level; it is not moved to the current pose.
 export function recenterTilt() {
   const fresh = performance.now() - tilt.lastEvent < 700;
   if (fresh && tilt.samples.length > 0 && !tilt.recenterPending) {
-    const recent = tilt.samples.slice(-6);
-    const average = recent.reduce((sum, value) => sum + value, 0) / recent.length;
-    tilt.raw = average;
-    tilt.neutral = average;
+    tilt.raw = tilt.samples[tilt.samples.length - 1];
     tilt.recenterPending = false;
   } else {
     // If the sensor is asleep, let the next live reading establish the zero.
