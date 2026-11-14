@@ -28,33 +28,47 @@ function sendOrientation(beta, gamma = 0) {
   listener({ beta, gamma });
 }
 
-test("landscape rotation rebases the gyro instead of carrying a left/right offset", async () => {
+test("straight is the phone's true level, not the pose at the first reading", async () => {
   input.setControls({ steer: "tilt", autoDrift: true });
   assert.equal(await input.enableTilt(), "granted");
 
   input.setScreenAngleOverride(90);
   sendOrientation(20);
   assert.equal(input.usingTilt(), true);
-  assert.equal(input.readInput(1 / 60).steer, 0, "first reading is the neutral pose");
+  assert.ok(input.readInput(0.3).steer > 0, "a phone already tilted at the start still steers");
 
+  sendOrientation(0);
+  sendOrientation(0);
+  sendOrientation(0);
+  sendOrientation(0);
+  sendOrientation(0);
+  sendOrientation(0);
+  sendOrientation(0);
+  sendOrientation(0);
+  assert.ok(Math.abs(input.readInput(0.5).steer) < 0.05, "a level phone drives straight");
+});
+
+test("turning the screen clears the old steering", async () => {
+  input.setScreenAngleOverride(90);
   sendOrientation(30);
   assert.ok(input.readInput(0.2).steer > 0, "a real tilt should steer before rotation");
 
   input.setScreenAngleOverride(270);
-  assert.equal(input.usingTilt(), false, "old coordinates are ignored while rebasing");
+  assert.equal(input.usingTilt(), false, "old coordinates are ignored until a fresh reading");
   assert.equal(input.readInput(0.2).steer, 0, "rotation clears the old steering offset");
 
-  sendOrientation(30);
+  sendOrientation(0);
   assert.equal(input.usingTilt(), true);
-  assert.equal(input.readInput(1 / 60).steer, 0, "first reading in the new orientation is neutral");
+  assert.equal(input.readInput(1 / 60).steer, 0, "level in the new orientation is straight");
 });
 
-test("manual reset averages recent sensor samples and clears accumulated steering", async () => {
+test("clearing the steering does not move the centre", async () => {
   input.setScreenAngleOverride(90);
-  sendOrientation(10);
   sendOrientation(24);
-  assert.ok(input.readInput(0.2).steer > 0, "sensor should be off-centre before reset");
+  sendOrientation(24);
+  assert.ok(input.readInput(0.2).steer > 0);
 
-  assert.equal(input.recenterTilt(), true);
-  assert.equal(input.readInput(0.2).steer, 0, "reset restores the steering centre immediately");
+  input.recenterTilt();
+  assert.equal(input.readInput(0).steer, 0, "built-up steering is cleared");
+  assert.ok(input.readInput(0.3).steer > 0, "the phone is still tilted, so it still steers");
 });
