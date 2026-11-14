@@ -6,7 +6,7 @@ export const Tracks = [
   {
     id: "sunny",
     name: "Sunny Loop",
-    width: 290,
+    width: 370,
     scale: 1.75, // the control points below are drawn small; this sets the real size
     smooth: 600, // rounds off tight bends (see smooth() below)
     theme: "meadow",
@@ -20,7 +20,7 @@ export const Tracks = [
   {
     id: "twisty",
     name: "Twisty Hills",
-    width: 280,
+    width: 360,
     scale: 1.75,
     smooth: 600,
     theme: "forest",
@@ -34,7 +34,7 @@ export const Tracks = [
   {
     id: "ridge",
     name: "Sunset Ridge",
-    width: 280,
+    width: 360,
     scale: 1.75,
     smooth: 600,
     theme: "autumn",
@@ -174,16 +174,21 @@ function resample(poly, spacing) {
 // Rounds off tight bends: every pass pulls each point towards the average of
 // its neighbours (a smoothing of the whole loop, so no corner stays sharp).
 function smooth(points, passes) {
-  let current = points;
+  const n = points.length;
+  let current = points.map(({ x, y }) => [x, y]);
+  let next = new Array(n);
+  for (let i = 0; i < n; i += 1) next[i] = [0, 0];
   for (let pass = 0; pass < passes; pass += 1) {
-    const n = current.length;
-    current = current.map((pt, i) => {
-      const a = current[(i - 1 + n) % n];
-      const b = current[(i + 1) % n];
-      return { x: (a.x + 2 * pt.x + b.x) / 4, y: (a.y + 2 * pt.y + b.y) / 4 };
-    });
+    for (let i = 0; i < n; i += 1) {
+      const prev = current[(i - 1 + n) % n];
+      const pt = current[i];
+      const following = current[(i + 1) % n];
+      next[i][0] = (prev[0] + 2 * pt[0] + following[0]) / 4;
+      next[i][1] = (prev[1] + 2 * pt[1] + following[1]) / 4;
+    }
+    [current, next] = [next, current];
   }
-  return current;
+  return current.map(([x, y]) => ({ x, y }));
 }
 
 export function buildTrack(def) {

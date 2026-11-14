@@ -567,12 +567,14 @@ export function createRenderer(canvas) {
   function draw({ track, karts, me, ghost, weather, photo, showStartMarker = false }, dt) {
     clock += dt;
     const focus = me ?? karts[0];
-    const chase = photo ? true : cameraMode === "chase";
+    const chase = photo ? true : cameraMode !== "fixed";
+    const rear = !photo && cameraMode === "rear";
     // Lead the camera ahead of the kart as speed rises. This moves the kart
     // toward the bottom of the screen and gives the player more time to read turns.
     const lookAhead = chase && !photo ? Math.min(88, Math.max(0, focus.speed * 0.16)) : 0;
-    const targetX = focus.x + Math.cos(focus.a) * lookAhead;
-    const targetY = focus.y + Math.sin(focus.a) * lookAhead;
+    const rearOffset = rear ? 175 : 0;
+    const targetX = focus.x + Math.cos(focus.a) * (lookAhead - rearOffset);
+    const targetY = focus.y + Math.sin(focus.a) * (lookAhead - rearOffset);
     if (!cam.ready) {
       cam.x = targetX;
       cam.y = targetY;
@@ -605,7 +607,7 @@ export function createRenderer(canvas) {
       fit = Math.min(fit, (0.74 * height) / AheadWorld);
     }
     const scale = fit * cam.zoom;
-    const anchorY = chase ? (photo ? height / 2 : height * 0.70) : height / 2;
+    const anchorY = chase ? (photo ? height / 2 : height * (rear ? 0.77 : 0.70)) : height / 2;
 
     shakeAmount *= Math.exp(-9 * dt);
     const shakeX = shakeAmount > 0.2 ? (Math.random() - 0.5) * shakeAmount : 0;
@@ -754,7 +756,7 @@ export function createRenderer(canvas) {
       cam.zoom = 1;
     },
     setCameraMode(mode) {
-      cameraMode = mode === "fixed" ? "fixed" : "chase";
+      cameraMode = ["fixed", "rear"].includes(mode) ? mode : "chase";
     },
     shake(amount) {
       shakeAmount = Math.max(shakeAmount, amount);
