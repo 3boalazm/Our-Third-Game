@@ -63,7 +63,9 @@ export const Physics = {
 };
 
 export const KartColors = ["#4f6bff", "#ff5a5f", "#2bb673", "#f5a623", "#a259ff", "#14b8c4"];
-export const LiveryOptions = ["stripe", "twin", "clean"];
+export const LiveryOptions = ["stripe", "twin", "clean", "number", "checker", "flames"];
+export const WheelOptions = ["standard", "sport", "offroad"];
+export const SpoilerOptions = ["standard", "none", "gt"];
 
 export function makeKart({
   id,
@@ -74,12 +76,16 @@ export function makeKart({
   isMe = false,
   isRemote = false,
   livery = "stripe",
+  wheels = "standard",
+  spoiler = "standard",
 }) {
   return {
     id,
     name,
     color,
     livery: LiveryOptions.includes(livery) ? livery : "stripe",
+    wheels: WheelOptions.includes(wheels) ? wheels : "standard",
+    spoiler: SpoilerOptions.includes(spoiler) ? spoiler : "standard",
     bot,
     skill,
     isMe, // the kart this browser drives

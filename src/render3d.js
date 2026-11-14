@@ -227,8 +227,77 @@ function box(w, h, d, mat, x, y, z) {
   return m;
 }
 
+// The decal painted on top of the body (a transparent texture, see buildKartModel).
+const decalCache = new Map();
+function liveryTexture(livery) {
+  if (decalCache.has(livery)) return decalCache.get(livery);
+  // drawn with the kart's nose to the right (+u), 256 x 128
+  const tex = canvasTexture(256, 128, (c, w, h) => {
+    c.clearRect(0, 0, w, h);
+    if (livery === "stripe") {
+      c.fillStyle = "rgba(255,255,255,0.95)";
+      c.fillRect(0, h * 0.38, w, h * 0.24);
+    } else if (livery === "twin") {
+      c.fillStyle = "rgba(255,255,255,0.95)";
+      c.fillRect(0, h * 0.2, w, h * 0.14);
+      c.fillRect(0, h * 0.66, w, h * 0.14);
+    } else if (livery === "checker") {
+      const cell = h / 4;
+      for (let y = 0; y < 4; y += 1) {
+        for (let x = 0; x < w / cell; x += 1) {
+          c.fillStyle = (x + y) % 2 === 0 ? "rgba(255,255,255,0.95)" : "rgba(15,15,20,0.9)";
+          c.fillRect(x * cell, y * cell, cell, cell);
+        }
+      }
+    } else if (livery === "number") {
+      c.fillStyle = "rgba(255,255,255,0.97)";
+      c.beginPath();
+      c.arc(w * 0.42, h / 2, h * 0.4, 0, Math.PI * 2);
+      c.fill();
+      c.fillStyle = "#11141c";
+      c.font = "900 " + Math.round(h * 0.56) + "px system-ui, sans-serif";
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      c.save();
+      c.translate(w * 0.42, h / 2);
+      c.rotate(Math.PI / 2); // reads upright from behind the kart
+      c.fillText("7", 0, 2);
+      c.restore();
+    } else if (livery === "flames") {
+      // flames licking back from the nose
+      const grad = c.createLinearGradient(w, 0, 0, 0);
+      grad.addColorStop(0, "#fff3a0");
+      grad.addColorStop(0.35, "#ffb22e");
+      grad.addColorStop(0.8, "#ff4b1f");
+      grad.addColorStop(1, "rgba(255,60,20,0)");
+      c.fillStyle = grad;
+      for (const [y0, len] of [[0.22, 0.9], [0.5, 1], [0.78, 0.85]]) {
+        c.beginPath();
+        c.moveTo(w, h * (y0 - 0.16));
+        for (let i = 0; i <= 6; i += 1) {
+          const x = w - (w * len * i) / 6;
+          const wobble = (i % 2 === 0 ? -1 : 1) * h * 0.07;
+          c.lineTo(x, h * y0 + wobble - h * 0.12 * (1 - i / 6));
+        }
+        for (let i = 6; i >= 0; i -= 1) {
+          const x = w - (w * len * i) / 6;
+          const wobble = (i % 2 === 0 ? 1 : -1) * h * 0.05;
+          c.lineTo(x, h * y0 + wobble + h * 0.12 * (1 - i / 6));
+        }
+        c.closePath();
+        c.fill();
+      }
+    }
+  }, false);
+  decalCache.set(livery, tex);
+  return tex;
+}
+
+const GoldRim = new THREE.MeshLambertMaterial({ color: 0xe0b44a, emissive: 0x2a1c00 });
+
 // A low-poly racing kart, ~62 world px long, facing +x.
-export function buildKartModel(color, livery = "stripe", { ghost = false } = {}) {
+//   parts: { wheels: "standard" | "sport" | "offroad", spoiler: "standard" | "none" | "gt" }
+export function buildKartModel(color, livery = "stripe", { ghost = false, wheels: wheelStyle = "standard", spoiler = "standard" } = {}) {
   const S = KartScale;
   const group = new THREE.Group();
   const body = new THREE.Group(); // leans and pitches; the wheels stay level
@@ -265,11 +334,21 @@ export function buildKartModel(color, livery = "stripe", { ghost = false } = {})
     pipe.position.set(-23 * S, 12 * S, side * 4 * S);
     body.add(pipe);
   }
-  // rear wing on two posts
-  for (const side of [-1, 1]) body.add(box(2 * S, 9 * S, 2 * S, Dark, -21 * S, 19 * S, side * 9 * S));
-  body.add(box(7 * S, 1.8 * S, 30 * S, paint, -22 * S, 24 * S, 0));
-  body.add(box(7 * S, 5 * S, 1.4 * S, paintDark, -22 * S, 22 * S, 15 * S));
-  body.add(box(7 * S, 5 * S, 1.4 * S, paintDark, -22 * S, 22 * S, -15 * S));
+  // rear wing on two posts (or a tall GT wing, or none)
+  if (spoiler === "gt") {
+    for (const side of [-1, 1]) body.add(box(2.4 * S, 17 * S, 2.4 * S, Dark, -22 * S, 23 * S, side * 8 * S));
+    const plate = box(10 * S, 2 * S, 38 * S, paint, -24 * S, 32 * S, 0);
+    plate.rotation.z = 0.12;
+    body.add(plate);
+    body.add(box(10 * S, 8 * S, 1.6 * S, Dark, -24 * S, 30 * S, 19 * S));
+    body.add(box(10 * S, 8 * S, 1.6 * S, Dark, -24 * S, 30 * S, -19 * S));
+    body.add(box(9 * S, 1 * S, 36 * S, White, -24.5 * S, 33.4 * S, 0));
+  } else if (spoiler !== "none") {
+    for (const side of [-1, 1]) body.add(box(2 * S, 9 * S, 2 * S, Dark, -21 * S, 19 * S, side * 9 * S));
+    body.add(box(7 * S, 1.8 * S, 30 * S, paint, -22 * S, 24 * S, 0));
+    body.add(box(7 * S, 5 * S, 1.4 * S, paintDark, -22 * S, 22 * S, 15 * S));
+    body.add(box(7 * S, 5 * S, 1.4 * S, paintDark, -22 * S, 22 * S, -15 * S));
+  }
   // driver
   body.add(box(9 * S, 9 * S, 11 * S, Suit, -5 * S, 18 * S, 0));
   const helmet = new THREE.Mesh(new THREE.SphereGeometry(5.6 * S, 14, 10), ghost ? White : paint);
@@ -283,11 +362,27 @@ export function buildKartModel(color, livery = "stripe", { ghost = false } = {})
   wheelRing.rotation.x = 0.4;
   wheelRing.position.set(4 * S, 17 * S, 0);
   body.add(wheelRing);
-  // livery stripes along the top
-  if (livery === "stripe") body.add(box(32 * S, 0.6 * S, 5 * S, White, 4 * S, 15.4 * S, 0));
-  if (livery === "twin") {
-    body.add(box(32 * S, 0.6 * S, 2.4 * S, White, 4 * S, 15.4 * S, 3.6 * S));
-    body.add(box(32 * S, 0.6 * S, 2.4 * S, White, 4 * S, 15.4 * S, -3.6 * S));
+  // the livery is a decal across the top of the body and nose
+  if (livery !== "clean") {
+    const decal = new THREE.Mesh(
+      new THREE.PlaneGeometry(44 * S, 17 * S),
+      new THREE.MeshLambertMaterial({ map: liveryTexture(livery), transparent: true, depthWrite: false }),
+    );
+    decal.rotation.x = -Math.PI / 2;
+    decal.position.set(8 * S, 15.2 * S, 0);
+    body.add(decal);
+    if (livery === "flames" || livery === "checker") {
+      // and down the side pods
+      for (const side of [-1, 1]) {
+        const sideDecal = new THREE.Mesh(
+          new THREE.PlaneGeometry(22 * S, 6 * S),
+          new THREE.MeshLambertMaterial({ map: liveryTexture(livery), transparent: true, depthWrite: false }),
+        );
+        sideDecal.position.set(-2 * S, 9 * S, side * 14.1 * S);
+        if (side < 0) sideDecal.rotation.y = Math.PI;
+        body.add(sideDecal);
+      }
+    }
   }
   // lamps
   for (const side of [-1, 1]) {
@@ -301,13 +396,27 @@ export function buildKartModel(color, livery = "stripe", { ghost = false } = {})
   wheelGeo.rotateX(Math.PI / 2);
   const hubGeo = new THREE.CylinderGeometry(3 * S, 3 * S, 6.4 * S, 10);
   hubGeo.rotateX(Math.PI / 2);
+  const offroad = wheelStyle === "offroad";
+  const sport = wheelStyle === "sport";
   for (const [x, z, front] of [[17, 15, true], [17, -15, true], [-17, 16, false], [-17, -16, false]]) {
     const pivot = new THREE.Group();
-    pivot.position.set(x * S, 6.2 * S, z * S);
+    pivot.position.set(x * S, (offroad ? 7.6 : 6.2) * S, z * S * (offroad ? 1.08 : 1));
     const spin = new THREE.Group();
     const tyre = new THREE.Mesh(wheelGeo, Rubber);
-    const hub = new THREE.Mesh(hubGeo, Metal);
+    const hub = new THREE.Mesh(hubGeo, sport ? GoldRim : Metal);
+    if (sport) hub.scale.set(1.45, 1.45, 1.02);
     if (!front) spin.scale.set(1.12, 1.12, 1.2);
+    if (offroad) {
+      spin.scale.multiplyScalar(1.22);
+      spin.scale.z *= 1.25;
+      // tread blocks round the tyre
+      for (let i = 0; i < 10; i += 1) {
+        const a = (i / 10) * Math.PI * 2;
+        const block = box(2.4 * S, 1.6 * S, 6.4 * S, Rubber, Math.cos(a) * 6.4 * S, Math.sin(a) * 6.4 * S, 0);
+        block.rotation.z = a;
+        spin.add(block);
+      }
+    }
     spin.add(tyre, hub);
     // a spoke so the spin is visible
     spin.add(box(1.2 * S, 9 * S, 6.6 * S, Dark, 0, 0, 0));
@@ -723,13 +832,13 @@ export function createRenderer3D(canvas) {
   // ---------------- karts
   function modelFor(kart) {
     let m = karts.get(kart);
-    if (m && (m.color !== kart.color || m.livery !== kart.livery)) {
+    if (m && (m.color !== kart.color || m.livery !== kart.livery || m.wheelStyle !== kart.wheels || m.spoiler !== kart.spoiler)) {
       scene.remove(m.root);
       karts.delete(kart);
       m = null;
     }
     if (!m) {
-      const built = buildKartModel(kart.color, kart.livery);
+      const built = buildKartModel(kart.color, kart.livery, { wheels: kart.wheels, spoiler: kart.spoiler });
       const root = new THREE.Group();
       const blob = new THREE.Mesh(new THREE.PlaneGeometry(80 * KartScale * 0.9, 46 * KartScale * 0.9), shadowMat);
       blob.rotation.x = -Math.PI / 2;
@@ -737,7 +846,7 @@ export function createRenderer3D(canvas) {
       built.group.add(blob);
       root.add(built.group);
       scene.add(root);
-      m = { ...built, root, lastA: kart.a, roll: 0, pitch: 0, lastSpeed: kart.speed ?? 0, wheelTurn: 0 };
+      m = { ...built, wheelStyle: kart.wheels, spoiler: kart.spoiler, root, lastA: kart.a, roll: 0, pitch: 0, lastSpeed: kart.speed ?? 0, wheelTurn: 0 };
       karts.set(kart, m);
     }
     return m;

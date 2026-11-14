@@ -21,6 +21,21 @@ import { WeatherOptions, applyWeather } from "./weather.js";
 import { challengeForDate, isChallengeDone, markChallengeDone } from "./challenges.js";
 import { createRenderer } from "./render.js";
 import {
+  Catalogue,
+  MaxLevel,
+  Upgrades,
+  applyUpgrades,
+  botCatchUp,
+  buyOrFit,
+  buyUpgrade,
+  coinsForRace,
+  isOwned,
+  itemFor,
+  readGarage,
+  upgradeCost,
+} from "./garage.js";
+import { createGarageView } from "./garage3d.js";
+import {
   DefaultPadBindings,
   PadButtonNames,
   activeGamepad,
@@ -124,8 +139,9 @@ function readPrefs() {
     autoDrift: saved.autoDrift !== false,
     difficulty: DifficultyOptions.includes(saved.difficulty) ? saved.difficulty : "normal",
     records: readRecords(saved.records),
-    color: KartColors.includes(saved.color) ? saved.color : KartColors[0],
-    livery: LiveryOptions.includes(saved.livery) ? saved.livery : "stripe",
+    // coins, upgrades and bought parts (see garage.js)
+    ...readGarage(saved),
+    dailyCoinsDay: typeof saved.dailyCoinsDay === "string" || typeof saved.dailyCoinsDay === "number" ? saved.dailyCoinsDay : null,
     weather: WeatherOptions.some((w) => w.id === saved.weather) ? saved.weather : "clear",
     padBindings: normalizePadBindings(saved.padBindings),
   };
@@ -565,7 +581,11 @@ function startDemo(trackId) {
   toastEl.hidden = true;
 }
 
+let activeGarageView = () => null;
+
 function startRace({ trackId, laps, kartsSpec, mode = "race", weather = prefs.weather, daily = false }) {
+  activeGarageView()?.dispose();
+  activeGarageView = () => null;
   padRemap = null;
   padRemapRender = null;
   replayBuffer = [];
@@ -587,6 +607,7 @@ function startRace({ trackId, laps, kartsSpec, mode = "race", weather = prefs.we
   }
   const savedGhost = mode === "trial" ? loadGhost(t.def.id) : null;
   const weatherDef = applyWeather(karts, weather);
+  if (me) applyUpgrades(me, prefs.upgrades);
   world = {
     state: "countdown",
     mode,
@@ -603,6 +624,9 @@ function startRace({ trackId, laps, kartsSpec, mode = "race", weather = prefs.we
     newGhost: false,
     newRecord: false,
     weather: weatherDef,
+    // for the coins at the end: drifts, nitro canisters and new best positions
+    stats: { drifts: 0, pickups: 0, overtakes: 0, bestRank: karts.length },
+    coins: null,
   };
   sendTimer = 0;
   wrongWay = 0;
@@ -645,7 +669,8 @@ function botColors(count) {
 }
 
 function startSolo() {
-  const skills = BotSkills[prefs.difficulty] ?? BotSkills.normal;
+  const catchUp = botCatchUp(prefs.upgrades);
+  const skills = (BotSkills[prefs.difficulty] ?? BotSkills.normal).map((skill) => skill * catchUp);
   const colors = botColors(3);
   startRace({
     trackId: prefs.track,
@@ -654,7 +679,7 @@ function startSolo() {
       { id: "b1", name: "Zip", color: colors[0], bot: true, skill: skills[0] },
       { id: "b2", name: "Bolt", color: colors[1], bot: true, skill: skills[1] },
       { id: "b3", name: "Turbo", color: colors[2], bot: true, skill: skills[2] },
-      { id: "me", name: "You", color: prefs.color, livery: prefs.livery, isMe: true },
+      { id: "me", name: "You", color: prefs.color, livery: prefs.livery, wheels: prefs.wheels, spoiler: prefs.spoiler, isMe: true },
     ],
   });
 }
@@ -664,7 +689,7 @@ function startTimeTrial() {
     trackId: prefs.track,
     laps: prefs.laps,
     mode: "trial",
-    kartsSpec: [{ id: "me", name: "You", color: prefs.color, livery: prefs.livery, isMe: true }],
+    kartsSpec: [{ id: "me", name: "You", color: prefs.color, livery: prefs.livery, wheels: prefs.wheels, spoiler: prefs.spoiler, isMe: true }],
   });
 }
 
@@ -676,7 +701,7 @@ function startDailyChallenge() {
     mode: "trial",
     weather: "clear",
     daily: true,
-    kartsSpec: [{ id: "me", name: "You", color: prefs.color, livery: prefs.livery, isMe: true }],
+    kartsSpec: [{ id: "me", name: "You", color: prefs.color, livery: prefs.livery, wheels: prefs.wheels, spoiler: prefs.spoiler, isMe: true }],
   });
 }
 
@@ -687,6 +712,9 @@ function startOnlineRace(trackId, laps) {
   const theirs = online.role === "host" ? guestKart : hostKart;
   mine.isMe = true;
   mine.name = "You";
+  mine.livery = prefs.livery;
+  mine.wheels = prefs.wheels;
+  mine.spoiler = prefs.spoiler;
   theirs.isRemote = true;
   theirs.name = "Friend";
   startRace({ trackId, laps, kartsSpec: [hostKart, guestKart], weather: "clear" });
@@ -969,6 +997,7 @@ function handleKartEvents(kart) {
     kart.padHit = 0;
   }
   if (kart.nitroPickupHit) {
+    if (mine && world?.stats) world.stats.pickups += 1;
     if (mine) {
       const gain = Math.round((kart.nitroPickupReward ?? 0) * 100);
       const fx = renderer.particles;
@@ -993,6 +1022,7 @@ function handleKartEvents(kart) {
     kart.nitroPickupReward = 0;
   }
   if (kart.driftReward > 0) {
+    if (mine && world?.stats) world.stats.drifts += 1;
     if (mine) {
       const gain = Math.round((kart.driftNitroReward ?? 0) * 100);
       showToast(gain > 0 ? `DRIFT REFILL +${gain}% NITRO` : "Drift burst!", "boost", 1300);
@@ -1123,6 +1153,7 @@ function update(dt, now) {
     handleKartEvents(kart);
     if (racing) noteLap(kart);
     if (racing && checkFinish(kart) && kart === me) {
+      awardCoins();
       session?.send({ t: "fin", time: kart.finishTime });
       audio.finish(standings().indexOf(me) === 0);
       showResults();
@@ -1183,6 +1214,10 @@ function updateHud() {
     showToast(`OVERTAKE! ${ordinal(rank)} PLACE`, "good", 950);
   }
   previousHudRank = rank;
+  if (world.stats && world.state === "racing" && world.raceTime > 3 && rank < world.stats.bestRank) {
+    world.stats.overtakes += world.stats.bestRank - rank;
+    world.stats.bestRank = rank;
+  }
   setText("lap", hud.lap, `Lap ${lap}/${world.laps}`);
   setText(
     "pos",
@@ -1437,7 +1472,7 @@ function showMenu() {
           <button type="button" class="menu-tab" data-menu-page="records"><span>04</span> Records</button>
           <button type="button" class="menu-tab" data-menu-page="settings"><span>05</span> Settings</button>
         </nav>
-        <div class="menu-top-actions"><span class="menu-online-indicator"><i></i> READY TO RACE</span><button type="button" class="menu-install" data-act="install" hidden>Install app ↗</button></div>
+        <div class="menu-top-actions"><span class="coin-chip" data-role="top-coins" title="Coins">0</span><span class="menu-online-indicator"><i></i> READY TO RACE</span><button type="button" class="menu-install" data-act="install" hidden>Install app ↗</button></div>
       </header>
       <main class="menu-pages">
         <section class="menu-page active" data-menu-screen="home">
@@ -1480,26 +1515,23 @@ function showMenu() {
         </section>
         <section class="menu-page" data-menu-screen="garage" hidden>
           <div class="page-heading"><div><span class="eyebrow">YOUR MACHINE. YOUR STYLE.</span><h1>THE GARAGE</h1><p>Build a kart that looks as fast as it drives.</p></div><span class="page-index">03 <i>/</i> 05</span></div>
-          <div class="garage-layout">
-            <section class="garage-showcase"><span class="eyebrow">PLAYER KART · CUSTOM BUILD</span>
-              <div class="garage-kart-symbol" data-role="garage-kart" data-livery="stripe">
-                <svg viewBox="0 0 420 260" role="img" aria-label="Your kart preview">
-                  <ellipse cx="210" cy="143" rx="164" ry="86" fill="rgba(0,0,0,.35)"/>
-                  <g fill="#080d15" stroke="rgba(220,235,255,.22)" stroke-width="4">
-                    <rect x="71" y="62" width="70" height="52" rx="17"/><rect x="279" y="62" width="70" height="52" rx="17"/>
-                    <rect x="71" y="162" width="70" height="52" rx="17"/><rect x="279" y="162" width="70" height="52" rx="17"/>
-                  </g>
-                  <path d="M210 25 C174 25 157 55 148 82 L118 111 Q104 125 118 146 L144 181 Q155 220 210 229 Q265 220 276 181 L302 146 Q316 125 302 111 L272 82 C263 55 246 25 210 25Z" fill="var(--kart-color,#5d91ef)" stroke="rgba(235,245,255,.8)" stroke-width="5"/>
-                  <path d="M174 91 Q210 67 246 91 L258 137 Q210 153 162 137Z" fill="#101a2a" stroke="rgba(230,241,255,.35)" stroke-width="4"/>
-                  <path class="kart-stripe kart-stripe-main" d="M203 34 L217 34 L230 86 L210 91 L190 86Z" fill="#f3f7ff" opacity=".92"/>
-                  <path class="kart-stripe kart-stripe-side" d="M157 111 L170 108 L184 178 L170 180Z" fill="#f3f7ff" opacity=".8"/>
-                  <path d="M181 188 Q210 202 239 188" fill="none" stroke="rgba(255,255,255,.6)" stroke-width="5" stroke-linecap="round"/>
-                  <circle cx="210" cy="177" r="12" fill="#0b1422" stroke="rgba(255,255,255,.65)" stroke-width="3"/>
-                </svg>
-              </div>
-              <div class="showcase-caption"><span>YOUR CURRENT BUILD</span><strong data-role="garage-colour-name">BLUE / RACING STRIPE</strong></div>
+          <div class="garage-layout garage-3d">
+            <section class="garage-showcase garage-stage">
+              <canvas class="garage-canvas" data-role="garage-canvas" aria-label="Your kart in the garage"></canvas>
+              <div class="garage-stage-top"><span class="eyebrow">PLAYER KART · CUSTOM BUILD</span><span class="coin-chip lg" data-role="garage-coins">0</span></div>
+              <div class="garage-stats" data-role="garage-stats"></div>
+              <div class="showcase-caption"><span>DRAG TO TURN</span><strong data-role="garage-colour-name">BLUE / RACING STRIPE</strong></div>
             </section>
-            <section class="menu-panel garage-options"><div class="panel-heading"><span>01 / BODY COLOUR</span><span>6 FINISHES</span></div><div data-slot="color"></div><div class="garage-divider"></div><div class="panel-heading"><span>02 / LIVERY</span><span>3 DESIGNS</span></div><div data-slot="livery"></div><div class="garage-tip"><span>✦</span> Your kart is saved automatically and will be ready on the starting grid.</div><button type="button" class="panel-primary-action" data-menu-page="home">BACK TO HOME <b>↗</b></button></section>
+            <section class="menu-panel garage-options">
+              <div class="garage-tabs" role="tablist">
+                <button type="button" class="garage-tab active" data-garage-tab="upgrades">Upgrades</button>
+                <button type="button" class="garage-tab" data-garage-tab="paint">Paint</button>
+                <button type="button" class="garage-tab" data-garage-tab="parts">Parts</button>
+              </div>
+              <div class="garage-tab-body" data-role="garage-body"></div>
+              <div class="garage-tip"><span>✦</span> Win races, drift and overtake to earn coins. Everything is saved on this device.</div>
+              <button type="button" class="panel-primary-action" data-menu-page="home">BACK TO HOME <b>↗</b></button>
+            </section>
           </div>
         </section>
         <section class="menu-page" data-menu-screen="records" hidden>
@@ -1532,7 +1564,140 @@ function showMenu() {
     </div>
   `);
   element.classList.add("menu-card");
+  // ---------- garage ----------
+  let garageTab = "upgrades";
+  let garageView = null;
+  const garageCanvas = element.querySelector('[data-role="garage-canvas"]');
+  const showGarageView = (on) => {
+    if (on && !garageView && garageCanvas) garageView = createGarageView(garageCanvas);
+    if (!garageView) return;
+    if (on) {
+      garageView.setKart({ color: prefs.color, livery: prefs.livery, wheels: prefs.wheels, spoiler: prefs.spoiler });
+      garageView.start();
+    } else {
+      garageView.stop();
+    }
+  };
+  activeGarageView = () => garageView;
+  const flash = (text, kind = "good") => showToast(text, kind, 1300);
+  const garageBody = element.querySelector('[data-role="garage-body"]');
+  function renderGarage() {
+    if (!garageBody) return;
+    const coinsText = prefs.coins.toLocaleString("en-US");
+    element.querySelectorAll('[data-role="garage-coins"], [data-role="top-coins"]').forEach((el) => {
+      el.textContent = coinsText;
+    });
+    const colorItem = itemFor("color", prefs.color);
+    const liveryItem = itemFor("livery", prefs.livery);
+    element.querySelector('[data-role="garage-colour-name"]').textContent =
+      `${(colorItem?.name ?? "Custom").toUpperCase()} / ${(liveryItem?.name ?? prefs.livery).toUpperCase()}`;
+    // stat bars on the stage
+    const stats = element.querySelector('[data-role="garage-stats"]');
+    stats.replaceChildren(
+      ...Upgrades.map((up) => {
+        const row = document.createElement("div");
+        row.className = "garage-stat";
+        const level = prefs.upgrades[up.id];
+        row.innerHTML = `<span>${up.stat}</span><i>${"<b></b>".repeat(MaxLevel)}</i>`;
+        row.querySelectorAll("b").forEach((b, i) => b.classList.toggle("on", i < level));
+        return row;
+      }),
+    );
+    element.querySelectorAll("[data-garage-tab]").forEach((tab) => tab.classList.toggle("active", tab.dataset.garageTab === garageTab));
+    const rows = [];
+    if (garageTab === "upgrades") {
+      for (const up of Upgrades) {
+        const level = prefs.upgrades[up.id];
+        const cost = upgradeCost(prefs, up.id);
+        const row = document.createElement("div");
+        row.className = "garage-item upgrade";
+        row.innerHTML = `<div class="garage-item-text"><strong></strong><small></small><i class="pips">${"<b></b>".repeat(MaxLevel)}</i></div><button type="button" class="garage-buy"></button>`;
+        row.querySelector("strong").textContent = `${up.name} · Level ${level}/${MaxLevel}`;
+        row.querySelector("small").textContent = `${up.stat} +${Math.round(up.perLevel * 100)}% per level`;
+        row.querySelectorAll(".pips b").forEach((b, i) => b.classList.toggle("on", i < level));
+        const buy = row.querySelector("button");
+        if (cost == null) {
+          buy.textContent = "MAXED";
+          buy.disabled = true;
+        } else {
+          buy.innerHTML = `UPGRADE <span class="coin-chip small">${cost.toLocaleString("en-US")}</span>`;
+          buy.classList.toggle("short", prefs.coins < cost);
+          buy.addEventListener("click", () => {
+            if (buyUpgrade(prefs, up.id)) {
+              savePrefs();
+              audio.boost();
+              flash(`${up.name} upgraded to level ${prefs.upgrades[up.id]}!`);
+              renderGarage();
+            } else {
+              flash(`You need ${(cost - prefs.coins).toLocaleString("en-US")} more coins`, "warn");
+            }
+          });
+        }
+        rows.push(row);
+      }
+    } else {
+      const slots = garageTab === "paint" ? [["color", "Body colour"], ["livery", "Livery"]] : [["wheels", "Wheels"], ["spoiler", "Rear wing"]];
+      for (const [slot, title] of slots) {
+        const heading = document.createElement("div");
+        heading.className = "panel-heading";
+        heading.innerHTML = `<span></span><span></span>`;
+        heading.firstChild.textContent = title.toUpperCase();
+        heading.lastChild.textContent = `${Catalogue[slot].filter((item) => isOwned(prefs, slot, item.id)).length} / ${Catalogue[slot].length} OWNED`;
+        rows.push(heading);
+        const grid = document.createElement("div");
+        grid.className = `garage-grid ${slot === "color" ? "swatch-grid" : ""}`;
+        for (const item of Catalogue[slot]) {
+          const owned = isOwned(prefs, slot, item.id);
+          const fitted = prefs[slot] === item.id;
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = `garage-part${fitted ? " fitted" : ""}${owned ? "" : " locked"}`;
+          btn.title = item.name;
+          if (slot === "color") {
+            btn.innerHTML = `<i class="swatch-dot"></i><small></small>`;
+            btn.querySelector("i").style.background = item.id;
+          } else {
+            btn.innerHTML = `<strong></strong><small></small>`;
+            btn.querySelector("strong").textContent = item.name;
+          }
+          const tag = btn.querySelector("small");
+          if (fitted) tag.textContent = "FITTED";
+          else if (owned) tag.textContent = slot === "color" ? item.name : "OWNED";
+          else tag.innerHTML = `<span class="coin-chip small">${item.cost.toLocaleString("en-US")}</span>`;
+          btn.addEventListener("click", () => {
+            const result = buyOrFit(prefs, slot, item.id);
+            if (result === "short") {
+              flash(`You need ${(item.cost - prefs.coins).toLocaleString("en-US")} more coins`, "warn");
+              return;
+            }
+            savePrefs();
+            if (result === "bought") {
+              audio.boost();
+              flash(`${item.name} unlocked!`);
+            }
+            garageView?.setKart({ color: prefs.color, livery: prefs.livery, wheels: prefs.wheels, spoiler: prefs.spoiler });
+            renderGarage();
+          });
+          grid.append(btn);
+        }
+        rows.push(grid);
+      }
+    }
+    garageBody.replaceChildren(...rows);
+  }
+  element.querySelectorAll("[data-garage-tab]").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      garageTab = tab.dataset.garageTab;
+      renderGarage();
+    });
+  });
+
   const activateMenuPage = (page) => {
+    try {
+      showGarageView(page === "garage");
+    } catch (err) {
+      console.warn("garage view", err); // the page still works without the 3D view
+    }
     element.querySelectorAll("[data-menu-screen]").forEach((section) => {
       const active = section.dataset.menuScreen === page;
       section.hidden = !active;
@@ -1729,29 +1894,7 @@ function showMenu() {
         "Weather",
       ),
     );
-    element.querySelector('[data-slot="color"]').replaceChildren(
-      swatches(prefs.color, (value) => {
-        prefs.color = value;
-        savePrefs();
-        renderChoices();
-      }),
-    );
-    element.querySelector('[data-slot="livery"]').replaceChildren(
-      choice(
-        [
-          { value: "stripe", text: "Racing stripe" },
-          { value: "twin", text: "Twin stripes" },
-          { value: "clean", text: "Clean" },
-        ],
-        prefs.livery,
-        (value) => {
-          prefs.livery = value;
-          savePrefs();
-          renderChoices();
-        },
-        "Livery",
-      ),
-    );
+    renderGarage();
     const ghost = loadGhost(prefs.track);
     element.querySelector('[data-role="trial-sub"]').textContent = ghost
       ? `Race your ghost · ${formatTime(ghost.time)}`
@@ -1766,10 +1909,6 @@ function showMenu() {
     element.querySelector('[data-role="track-record-summary"]').textContent = best
       ? `${formatTime(best)} · ${medalForLap(track(prefs.track), best)?.toUpperCase() ?? "PERSONAL BEST"}`
       : "No lap record yet. Set your first time.";
-    element.querySelector('[data-role="garage-colour-name"]').textContent = `${ColorNames[KartColors.indexOf(prefs.color)] ?? "CUSTOM"} / ${prefs.livery.toUpperCase()}`;
-    const garageKart = element.querySelector('[data-role="garage-kart"]');
-    garageKart.style.setProperty("--kart-color", prefs.color);
-    garageKart.dataset.livery = prefs.livery;
     renderRecords();
   };
   renderChoices();
@@ -2326,6 +2465,27 @@ function hideResults() {
   resultsEl = null;
 }
 
+// Coins for the race that just ended (once per race).
+function awardCoins() {
+  if (!world || !me || world.coins || world.mode === "demo") return;
+  const order = standings();
+  const challenge = challengeForDate();
+  const daily = !!world.daily && prefs.dailyCoinsDay !== challenge.day;
+  const result = coinsForRace({
+    place: order.indexOf(me) + 1,
+    karts: world.karts.length,
+    laps: world.laps,
+    mode: world.mode === "trial" ? "trial" : "race",
+    stats: world.stats ?? {},
+    newRecord: !!world.newRecord,
+    daily,
+  });
+  if (daily) prefs.dailyCoinsDay = challenge.day;
+  prefs.coins += result.total;
+  savePrefs();
+  world.coins = result;
+}
+
 function showResults() {
   if (resultsEl) return;
   hidePause();
@@ -2335,6 +2495,7 @@ function showResults() {
     <h1 data-role="title"></h1>
     <p class="results-sub" data-role="bestlap"></p>
     <ol class="results" data-role="rows"></ol>
+    <div class="coin-reward" data-role="coins" hidden></div>
     <div class="row-buttons">
       <button type="button" class="big primary" data-act="again"></button>
       <a class="big" data-role="menu">Menu</a>
@@ -2428,6 +2589,25 @@ function fillResults() {
       badge.textContent = "Daily challenge complete";
       recordLine.append(badge);
     }
+  }
+  const coinBox = resultsEl.querySelector('[data-role="coins"]');
+  if (world.coins && coinBox.dataset.shown !== "1") {
+    coinBox.dataset.shown = "1";
+    coinBox.hidden = false;
+    const head = document.createElement("div");
+    head.className = "coin-head";
+    head.innerHTML = `<span>COINS EARNED</span><strong>+${world.coins.total}</strong>`;
+    const list = document.createElement("ul");
+    for (const line of world.coins.lines) {
+      const li = document.createElement("li");
+      li.innerHTML = `<span></span><b>+${line.coins}</b>`;
+      li.firstChild.textContent = line.label;
+      list.append(li);
+    }
+    const wallet = document.createElement("div");
+    wallet.className = "coin-wallet";
+    wallet.textContent = `Wallet: ${prefs.coins.toLocaleString("en-US")} coins · spend them in the Garage`;
+    coinBox.append(head, list, wallet);
   }
   const rows = resultsEl.querySelector('[data-role="rows"]');
   rows.replaceChildren(

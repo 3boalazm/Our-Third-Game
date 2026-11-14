@@ -371,3 +371,43 @@ html.short .hud-box.right .nitro-status {
 .gyro-calibrate-action:active {
   background: rgba(41, 125, 164, .42);
 }
+
+/* ---------- 3D garage, coins and upgrades ---------- */
+.coin-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 10px 5px 7px;border:1px solid rgba(255,206,92,.35);border-radius:999px;background:rgba(255,190,60,.12);color:#ffd77a;font-size:11px;font-weight:900;letter-spacing:.02em;white-space:nowrap}
+.coin-chip:before{display:inline-block;width:13px;height:13px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff3b8,#f7c23c 45%,#c98a12);box-shadow:inset 0 0 0 1.5px rgba(120,70,0,.35);content:""}
+.coin-chip.lg{padding:7px 13px 7px 9px;font-size:15px}.coin-chip.lg:before{width:17px;height:17px}
+.coin-chip.small{padding:2px 7px 2px 5px;font-size:10px}.coin-chip.small:before{width:10px;height:10px}
+.garage-layout.garage-3d{grid-template-columns:minmax(0,1.25fr) minmax(300px,.9fr)}
+.garage-stage{padding:0;min-height:420px;background:#0b111c}.garage-stage:before{display:none}
+.garage-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+.garage-canvas:active{cursor:grabbing}
+.garage-stage-top{position:relative;display:flex;justify-content:space-between;align-items:center;padding:16px 18px 0;pointer-events:none}
+.garage-stage .showcase-caption{padding:0 18px 16px;pointer-events:none}
+.garage-stats{position:absolute;left:18px;top:56px;display:flex;flex-direction:column;gap:7px;pointer-events:none}
+.garage-stat{display:flex;flex-direction:column;gap:3px}.garage-stat span{color:#9fb3cf;font-size:8px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}
+.garage-stat i,.garage-item .pips{display:flex;gap:3px}.garage-stat b,.garage-item .pips b{display:block;width:16px;height:5px;border-radius:2px;background:rgba(160,185,220,.18)}
+.garage-stat b.on,.garage-item .pips b.on{background:linear-gradient(90deg,#6ad7ff,#8ff0c4);box-shadow:0 0 8px rgba(106,215,255,.45)}
+.garage-tabs{display:flex;gap:4px;padding:4px;border-radius:11px;background:rgba(6,13,24,.55)}
+.garage-tab{flex:1;min-height:36px;border:0;border-radius:8px;background:transparent;color:#91a5c1;font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
+.garage-tab.active{background:#709bf0;color:#071426}
+.garage-tab-body{display:flex;flex-direction:column;gap:10px;min-height:0;overflow-y:auto;max-height:52vh;padding-right:2px}
+.garage-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid rgba(172,195,228,.13);border-radius:11px;background:rgba(8,17,29,.5)}
+.garage-item-text{display:flex;flex-direction:column;gap:5px;min-width:0}.garage-item-text strong{color:#eef5ff;font-size:12px;letter-spacing:.03em}.garage-item-text small{color:#8ea3bf;font-size:10px}
+.garage-buy{display:inline-flex;align-items:center;gap:7px;min-height:36px;padding:0 11px;border:0;border-radius:8px;background:#ffd166;color:#2a1a00;font-size:10px;font-weight:1000;letter-spacing:.06em;cursor:pointer;white-space:nowrap}
+.garage-buy .coin-chip{background:rgba(255,255,255,.35);border-color:rgba(120,70,0,.25);color:#3a2400}
+.garage-buy.short{background:#3a4454;color:#b8c4d6}.garage-buy.short .coin-chip{background:rgba(0,0,0,.2);color:#ffd77a}
+.garage-buy:disabled{background:rgba(143,240,196,.18);color:#8ff0c4;cursor:default}
+.garage-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.garage-grid.swatch-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.garage-part{position:relative;display:flex;min-height:62px;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:8px 6px;border:1px solid rgba(172,195,228,.15);border-radius:10px;background:rgba(8,17,29,.5);color:#c9d6e8;cursor:pointer;text-align:center}
+.garage-part strong{font-size:10px;line-height:1.2}.garage-part small{color:#8ea3bf;font-size:8px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}
+.garage-part.fitted{border-color:#7da8f7;background:rgba(94,139,219,.2);box-shadow:0 0 0 2px rgba(125,168,247,.25)}.garage-part.fitted small{color:#9fc4ff}
+.garage-part.locked{opacity:.88}.garage-part.locked:after{position:absolute;top:5px;right:6px;font-size:9px;content:"🔒"}
+.swatch-dot{display:block;width:28px;height:28px;border:2px solid rgba(255,255,255,.35);border-radius:50%;box-shadow:0 3px 10px rgba(0,0,0,.3)}
+.coin-reward{margin:6px 0 12px;padding:12px 14px;border:1px solid rgba(255,206,92,.28);border-radius:12px;background:rgba(255,190,60,.08)}
+.coin-head{display:flex;justify-content:space-between;align-items:baseline}.coin-head span{color:#ffd77a;font-size:10px;font-weight:900;letter-spacing:.14em}.coin-head strong{color:#ffe08f;font-size:24px}
+.coin-reward ul{margin:8px 0 6px;padding:0;list-style:none;display:flex;flex-direction:column;gap:3px}.coin-reward li{display:flex;justify-content:space-between;color:#d6dfeb;font-size:12px}.coin-reward li b{color:#ffd77a}
+.coin-wallet{color:#9fb0c7;font-size:11px}
+@media(max-width:900px){.garage-layout.garage-3d{grid-template-columns:1fr 1fr}}
+@media(max-width:650px){.garage-layout.garage-3d{grid-template-columns:1fr}.garage-stage{min-height:300px}.garage-tab-body{max-height:none}.garage-grid.swatch-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.garage-stage-top .coin-chip{flex:0 0 auto}
