@@ -7,6 +7,67 @@ const Grass = "#4a9a52";
 const GrassLine = "rgba(0, 0, 0, 0.06)";
 const MaxMarks = 850;
 
+// The road never changes during a race. Rasterize its heavy geometry into the
+// same per-track offscreen layer as the scenery, instead of stroking ~900-point
+// paths and rebuilding both edge guides on every animation frame.
+function drawStaticTrack(ctx, track) {
+  const w = track.def.width;
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.setLineDash([]);
+  ctx.strokeStyle = "#d8423f";
+  ctx.lineWidth = w + 40;
+  ctx.stroke(track.path);
+  ctx.strokeStyle = "#f6f6f6";
+  ctx.setLineDash([38, 38]);
+  ctx.stroke(track.path);
+  ctx.setLineDash([]);
+  ctx.strokeStyle = "#454a58";
+  ctx.lineWidth = w;
+  ctx.stroke(track.path);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.32)";
+  ctx.lineWidth = 5;
+  ctx.setLineDash([28, 34]);
+  ctx.stroke(track.path);
+  ctx.setLineDash([]);
+
+  // Thin painted edge guides are static too; bake them with the road.
+  ctx.strokeStyle = "rgba(234, 246, 255, 0.62)";
+  ctx.lineWidth = 4;
+  ctx.setLineDash([24, 20]);
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    for (let i = 0; i < track.N; i += 1) {
+      const s = track.samples[i];
+      const offset = side * (track.halfWidth - 17);
+      const x = s.x - s.ty * offset;
+      const y = s.y + s.tx * offset;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // The start / finish line is part of the baked track layer as well.
+  const s = track.samples[0];
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.rotate(Math.atan2(s.ty, s.tx));
+  const half = track.halfWidth;
+  const cell = 20;
+  for (let row = 0, y = -half; y < half; row += 1, y += cell) {
+    for (let col = 0; col < 2; col += 1) {
+      ctx.fillStyle = (row + col) % 2 === 0 ? "#ffffff" : "#1b1b1b";
+      ctx.fillRect(col * cell - cell, y, cell, Math.min(cell, half - y));
+    }
+  }
+  ctx.restore();
+  ctx.restore();
+}
+
 export function createRenderer(canvas) {
   const ctx = canvas.getContext("2d");
   // "chase": the camera sits behind the kart, so the road ahead always runs up the
@@ -104,6 +165,7 @@ export function createRenderer(canvas) {
       lc.fill();
     }
     drawScenery(lc, scenery);
+    drawStaticTrack(lc, track);
     layer = { id: track.def.id, canvas: off, x: b.minX - margin, y: b.minY - margin, w: worldW, h: worldH };
     return layer;
   }
@@ -112,62 +174,6 @@ export function createRenderer(canvas) {
     markCursor = 0;
     markCount = 0;
     for (const kart of karts ?? []) kart.__marks = null;
-  }
-
-  function drawTrack(track) {
-    const w = track.def.width;
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    ctx.setLineDash([]);
-    ctx.strokeStyle = "#d8423f";
-    ctx.lineWidth = w + 40;
-    ctx.stroke(track.path);
-    ctx.strokeStyle = "#f6f6f6";
-    ctx.setLineDash([38, 38]);
-    ctx.stroke(track.path);
-    ctx.setLineDash([]);
-    ctx.strokeStyle = "#454a58";
-    ctx.lineWidth = w;
-    ctx.stroke(track.path);
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.32)";
-    ctx.lineWidth = 5;
-    ctx.setLineDash([28, 34]);
-    ctx.stroke(track.path);
-    ctx.setLineDash([]);
-
-    // Thin painted edge guides make the drivable width easier to read at speed.
-    ctx.strokeStyle = "rgba(234, 246, 255, 0.62)";
-    ctx.lineWidth = 4;
-    ctx.setLineDash([24, 20]);
-    for (const side of [-1, 1]) {
-      ctx.beginPath();
-      for (let i = 0; i < track.N; i += 1) {
-        const s = track.samples[i];
-        const offset = side * (track.halfWidth - 17);
-        const x = s.x - s.ty * offset;
-        const y = s.y + s.tx * offset;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.closePath();
-      ctx.stroke();
-    }
-    ctx.setLineDash([]);
-
-    // start / finish line
-    const s = track.samples[0];
-    ctx.save();
-    ctx.translate(s.x, s.y);
-    ctx.rotate(Math.atan2(s.ty, s.tx));
-    const half = track.halfWidth;
-    const cell = 20;
-    for (let row = 0, y = -half; y < half; row += 1, y += cell) {
-      for (let col = 0; col < 2; col += 1) {
-        ctx.fillStyle = (row + col) % 2 === 0 ? "#ffffff" : "#1b1b1b";
-        ctx.fillRect(col * cell - cell, y, cell, Math.min(cell, half - y));
-      }
-    }
-    ctx.restore();
   }
 
   // Glowing chevrons across the road. A pulse runs along them towards the
@@ -330,7 +336,7 @@ export function createRenderer(canvas) {
     ctx.save();
     ctx.translate(kart.x, kart.y);
     // keep the text upright even though the whole world is turned by the chase camera
-    ctx.rotate(cameraMode === "chase" ? cam.angle + Math.PI / 2 : 0);
+    ctx.rotate(cameraMode !== "fixed" ? cam.angle + Math.PI / 2 : 0);
     ctx.font = "600 15px system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.lineWidth = 4;
@@ -492,7 +498,7 @@ export function createRenderer(canvas) {
     ctx.restore();
     ctx.save();
     ctx.translate(ghost.x, ghost.y);
-    ctx.rotate(cameraMode === "chase" ? cam.angle + Math.PI / 2 : 0);
+    ctx.rotate(cameraMode !== "fixed" ? cam.angle + Math.PI / 2 : 0);
     ctx.font = "700 12px system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.lineWidth = 3;
@@ -645,7 +651,6 @@ export function createRenderer(canvas) {
     // static grass texture and scenery, baked once per track
     const world = ensureLayer(track);
     ctx.drawImage(world.canvas, world.x, world.y, world.w, world.h);
-    drawTrack(track);
     drawPads(track);
     drawNitroPickups(track, me);
     rememberMarks(karts);
