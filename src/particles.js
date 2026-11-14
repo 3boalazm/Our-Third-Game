@@ -81,5 +81,13 @@ export function createParticles() {
     for (const p of pool) p.live = false;
   }
 
-  return { emit, update, draw, clear };
+  function activeCount() {
+    let count = 0;
+    for (const particle of pool) {
+      if (particle.live) count += 1;
+    }
+    return count;
+  }
+
+  return { emit, update, draw, clear, activeCount };
 }
