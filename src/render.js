@@ -2,6 +2,7 @@ import { KartScale, Physics, angleDiff } from "./game.js";
 import { createParticles } from "./particles.js";
 import { createScenery, drawScenery } from "./scenery.js";
 import { viewport } from "./layout.js";
+import { createRenderer3D } from "./render3d.js";
 
 const Grass = "#4a9a52";
 const GrassLine = "rgba(0, 0, 0, 0.06)";
@@ -68,11 +69,15 @@ function drawStaticTrack(ctx, track) {
   ctx.restore();
 }
 
-export function createRenderer(canvas) {
+export function createRenderer(canvas, canvas3d = null) {
   const ctx = canvas.getContext("2d");
+  // The 3D view (camera behind the kart) draws the world on its own WebGL canvas
+  // underneath; this 2D canvas then only adds the screen-space extras on top.
+  const r3d = canvas3d ? createRenderer3D(canvas3d) : null;
   // "chase": the camera sits behind the kart, so the road ahead always runs up the
   // screen. "fixed": the map stays put and the kart turns on it.
-  let cameraMode = "chase";
+  let cameraMode = r3d ? "behind" : "chase";
+  const is3d = () => !!r3d && (cameraMode === "behind" || cameraMode === "near");
   const AheadWorld = 820; // keep a longer stretch of road visible in the chase view
   const cam = { x: 0, y: 0, zoom: 1, angle: 0, ready: false };
   const particles = createParticles();
@@ -114,6 +119,8 @@ export function createRenderer(canvas) {
     canvas.height = Math.round(height * dpr);
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
+    // the 3D view is drawn at a slightly lower resolution: it is the heavy part
+    r3d?.resize(width, height, Math.min(dpr, 1.5));
     const cx = width / 2;
     const cy = height / 2;
     const reach = Math.max(width, height) * 0.72;
@@ -607,7 +614,109 @@ export function createRenderer(canvas) {
     }
   }
 
-  function draw({ track, karts, me, ghost, weather, photo, showStartMarker = false }, dt) {
+  let lastState = null;
+  function draw(state, dt) {
+    lastState = state;
+    const show3d = is3d();
+    if (r3d) r3d.canvas.style.visibility = show3d ? "visible" : "hidden";
+    if (show3d) {
+      draw3d(state, dt);
+      return;
+    }
+    draw2d(state, dt);
+  }
+
+  // Name tags, the start marker, weather, speed lines and the minimap over the 3D view.
+  function draw3d({ track, karts, me, ghost, weather, photo, showStartMarker = false }, dt) {
+    clock += dt;
+    const focus = me ?? karts[0];
+    shakeAmount *= Math.exp(-9 * dt);
+    boostVisual += ((focus?.nitroOn ? 1 : 0) - boostVisual) * Math.min(1, dt * 6);
+    rememberMarks(karts);
+    r3d.render({ track, karts, me, ghost, weather, photo, marks, markCount, clock, shake: shakeAmount }, dt);
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    particles.drawProjected(ctx, r3d.project);
+
+    if (!photo) {
+      ctx.save();
+      ctx.textAlign = "center";
+      for (const kart of karts) {
+        if (kart === me || !kart.name) continue;
+        const p = r3d.project(kart.x, kart.y, 62 * KartScale);
+        if (!p || p.scale < 0.12) continue;
+        const size = Math.max(11, Math.min(17, 15 * p.scale * 1.6));
+        ctx.font = `700 ${size}px system-ui, sans-serif`;
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+        ctx.strokeText(kart.name, p.x, p.y);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(kart.name, p.x, p.y);
+      }
+      if (ghost) {
+        const p = r3d.project(ghost.x, ghost.y, 55 * KartScale);
+        if (p) {
+          ctx.font = "700 12px system-ui, sans-serif";
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = "rgba(0, 0, 0, 0.45)";
+          ctx.strokeText("GHOST", p.x, p.y);
+          ctx.fillStyle = "rgba(220, 246, 255, 0.9)";
+          ctx.fillText("GHOST", p.x, p.y);
+        }
+      }
+      ctx.restore();
+    }
+
+    // rain streaks on the screen (night and the sky are done in 3D)
+    if (weather?.id === "rain") drawWeather(weather, dt, () => ({ x: 0, y: 0 }), focus, true, photo);
+
+    if (!photo && showStartMarker && me) {
+      const point = r3d.project(me.x, me.y, 4);
+      if (point) {
+        const pulse = 0.78 + 0.18 * (0.5 + 0.5 * Math.sin(clock * 6));
+        const radiusX = Math.max(30, point.scale * 52);
+        const radiusY = Math.max(12, point.scale * 22);
+        ctx.save();
+        ctx.translate(point.x, point.y);
+        ctx.globalAlpha = pulse;
+        ctx.strokeStyle = "#a7efff";
+        ctx.lineWidth = 3;
+        ctx.shadowColor = "rgba(91, 213, 255, 0.9)";
+        ctx.shadowBlur = 16;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, radiusX, radiusY, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        const labelY = -Math.max(70, point.scale * 110);
+        ctx.fillStyle = "rgba(5, 14, 26, 0.94)";
+        ctx.beginPath();
+        ctx.roundRect(-31, labelY - 10, 62, 20, 8);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(167, 239, 255, 0.9)";
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "900 10px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("YOU", 0, labelY);
+        ctx.restore();
+      }
+    }
+
+    if (!photo && boostVisual > 0.03) {
+      drawSpeedLines();
+      ctx.save();
+      ctx.globalAlpha = boostVisual * 0.8;
+      ctx.fillStyle = boostGradient;
+      ctx.fillRect(0, 0, width, height);
+      ctx.restore();
+    }
+    if (!photo) drawMinimap(track, karts, me, ghost);
+  }
+
+  function draw2d({ track, karts, me, ghost, weather, photo, showStartMarker = false }, dt) {
     clock += dt;
     const focus = me ?? karts[0];
     const chase = photo ? true : cameraMode !== "fixed";
@@ -814,15 +923,31 @@ export function createRenderer(canvas) {
     resetCamera() {
       cam.ready = false;
       cam.zoom = 1;
+      r3d?.resetCamera();
     },
     setCameraMode(mode) {
-      cameraMode = ["fixed", "rear"].includes(mode) ? mode : "chase";
+      const modes = r3d ? ["behind", "near", "chase", "rear", "fixed"] : ["chase", "rear", "fixed"];
+      cameraMode = modes.includes(mode) ? mode : modes[0];
+      r3d?.setMode(cameraMode);
     },
+    has3d: !!r3d,
     shake(amount) {
       shakeAmount = Math.max(shakeAmount, amount);
     },
     snapshot() {
       try {
+        if (is3d()) {
+          // the 3D picture and the overlay together (WebGL keeps its picture until the next frame
+          // only during the same task, so copy it right after a fresh draw)
+          const out = document.createElement("canvas");
+          out.width = canvas.width;
+          out.height = canvas.height;
+          const o = out.getContext("2d");
+          if (lastState) draw(lastState, 0);
+          o.drawImage(r3d.canvas, 0, 0, out.width, out.height);
+          o.drawImage(canvas, 0, 0);
+          return out.toDataURL("image/png");
+        }
         return canvas.toDataURL("image/png");
       } catch {
         return null;

@@ -47,6 +47,16 @@ import { audio } from "./audio.js";
 import { initLayout, onLayout, setForceLandscape } from "./layout.js";
 import { createOnlineSession, createRoomId } from "./online.js";
 
+// Camera views: two 3D views behind the kart, and the original top-down ones.
+const CameraModes = ["behind", "near", "chase", "rear", "fixed"];
+const CameraChoices = [
+  { value: "behind", text: "Behind (3D)" },
+  { value: "near", text: "Close (3D)" },
+  { value: "chase", text: "Top follow" },
+  { value: "rear", text: "Top rear" },
+  { value: "fixed", text: "Fixed map" },
+];
+
 const LapOptions = [1, 3, 5];
 const DifficultyOptions = ["easy", "normal", "hard"];
 // Bot skill multiplies their top speed; the AI also drifts and uses nitro.
@@ -107,7 +117,9 @@ function readPrefs() {
     tiltSens: readSens(saved),
     screenMode: saved.screenMode === "landscape" ? "landscape" : "auto",
     fullscreen: saved.fullscreen !== false,
-    camera: ["fixed", "chase", "rear"].includes(saved.camera) ? saved.camera : "chase",
+    // everybody starts once on the new 3D view (cam3d marks prefs saved after it arrived)
+    camera: saved.cam3d && CameraModes.includes(saved.camera) ? saved.camera : "behind",
+    cam3d: true,
     flip: saved.flip === true,
     autoDrift: saved.autoDrift !== false,
     difficulty: DifficultyOptions.includes(saved.difficulty) ? saved.difficulty : "normal",
@@ -172,6 +184,7 @@ const online = RoomPattern.test(roomParam ?? "")
 
 const root = document.getElementById("app");
 root.innerHTML = `
+  <canvas id="game3d"></canvas>
   <canvas id="game"></canvas>
   <div id="hud" hidden>
     <div class="hud-left">
@@ -241,7 +254,7 @@ root.innerHTML = `
 `;
 const $ = (id) => document.getElementById(id);
 const canvas = $("game");
-const renderer = createRenderer(canvas);
+const renderer = createRenderer(canvas, $("game3d"));
 const photoEl = $("photo");
 const replayEl = $("replay");
 const hud = {
@@ -392,7 +405,7 @@ window.addEventListener("keydown", (event) => {
     toggleFullscreen();
   }
   if (event.code === "KeyC" && !event.repeat) {
-    prefs.camera = ({ chase: "rear", rear: "fixed", fixed: "chase" })[prefs.camera] ?? "chase";
+    prefs.camera = CameraModes[(CameraModes.indexOf(prefs.camera) + 1) % CameraModes.length];
     savePrefs();
     applyControls();
   }
@@ -1323,7 +1336,7 @@ function cameraGroup() {
   const render = () =>
     holder.replaceChildren(
       choice(
-        [{ value: "chase", text: "Follow view" }, { value: "rear", text: "Close rear view" }, { value: "fixed", text: "Fixed map" }],
+        CameraChoices,
         prefs.camera,
         (value) => {
           prefs.camera = value;
@@ -1814,7 +1827,7 @@ function showMenu() {
       );
       element.querySelector('[data-slot="camera"]').replaceChildren(
         choice(
-          [{ value: "chase", text: "Follow view" }, { value: "rear", text: "Close rear view" }, { value: "fixed", text: "Fixed map" }],
+          CameraChoices,
           prefs.camera,
           (value) => set("camera", value),
           "Camera",
@@ -2660,8 +2673,8 @@ function frameInner(now) {
     lastPerfPaint = now;
     const heap = performance.memory?.usedJSHeapSize;
     perfEl.textContent =
-      `FPS ${Math.round(1 / Math.max(frameAverage, 0.001))}  FRAME ${(frameDt * 1000).toFixed(1)}ms\\n` +
-      `UPDATE ${updateMs.toFixed(1)}ms  DRAW ${drawMs.toFixed(1)}ms\\n` +
+      `FPS ${Math.round(1 / Math.max(frameAverage, 0.001))}  FRAME ${(frameDt * 1000).toFixed(1)}ms\n` +
+      `UPDATE ${updateMs.toFixed(1)}ms  DRAW ${drawMs.toFixed(1)}ms\n` +
       `KARTS ${world?.karts?.length ?? 0}  PARTICLES ${renderer.particles.activeCount()}` +
       (heap ? `  HEAP ${Math.round(heap / 1048576)}MB` : "");
     perfEl.hidden = false;
