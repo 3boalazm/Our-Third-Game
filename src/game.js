@@ -133,6 +133,13 @@ export function makeKart({
     accelScale: 1,
     steerScale: 1,
     rubber: 1, // bot rubber-banding, and 1 for every human kart
+    // items (see items.js)
+    item: null,
+    itemRoll: 0,
+    itemPending: null,
+    itemHeld: 0,
+    shieldTimer: 0,
+    spinTimer: 0,
   };
 }
 
@@ -213,6 +220,17 @@ export function slipstream(kart, others = []) {
 // input: { steer: -1..1 (negative = left), gas, brake, drift, nitro }
 export function stepKart(kart, input, dt, track, canDrive, others = []) {
   const P = Physics;
+  // Hit by a rocket or oil: the kart spins round once, losing speed, and
+  // ignores the controls until it has stopped spinning.
+  if ((kart.spinTimer ?? 0) > 0) {
+    kart.spinTimer = Math.max(0, kart.spinTimer - dt);
+    input = { steer: 0, gas: false, brake: false, drift: false, nitro: false };
+    kart.a += (Math.PI * 2 / 1.0) * dt;
+    const drag = Math.exp(-2.4 * dt);
+    kart.vx *= drag;
+    kart.vy *= drag;
+    kart.driftTime = 0;
+  }
   let fx = Math.cos(kart.a);
   let fy = Math.sin(kart.a);
   let along = kart.vx * fx + kart.vy * fy;

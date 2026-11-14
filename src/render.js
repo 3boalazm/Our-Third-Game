@@ -627,13 +627,13 @@ export function createRenderer(canvas, canvas3d = null) {
   }
 
   // Name tags, the start marker, weather, speed lines and the minimap over the 3D view.
-  function draw3d({ track, karts, me, ghost, weather, photo, showStartMarker = false }, dt) {
+  function draw3d({ track, karts, me, ghost, weather, photo, showStartMarker = false, items = null, itemTime = 0 }, dt) {
     clock += dt;
     const focus = me ?? karts[0];
     shakeAmount *= Math.exp(-9 * dt);
     boostVisual += ((focus?.nitroOn ? 1 : 0) - boostVisual) * Math.min(1, dt * 6);
     rememberMarks(karts);
-    r3d.render({ track, karts, me, ghost, weather, photo, marks, markCount, clock, shake: shakeAmount }, dt);
+    r3d.render({ track, karts, me, ghost, weather, photo, marks, markCount, clock, shake: shakeAmount, items, itemTime }, dt);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
@@ -716,7 +716,60 @@ export function createRenderer(canvas, canvas3d = null) {
     if (!photo) drawMinimap(track, karts, me, ghost);
   }
 
-  function draw2d({ track, karts, me, ghost, weather, photo, showStartMarker = false }, dt) {
+  // Item boxes, rockets, oil and shields in the top-down views.
+  function drawItems2d(items, itemTime, karts) {
+    if (!items) return;
+    for (const b of items.boxes) {
+      if (itemTime < b.activeAt) continue;
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(clock * 1.5);
+      ctx.fillStyle = "rgba(255, 210, 90, 0.9)";
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(-15, -15, 30, 30, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.rotate(-clock * 1.5);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "900 20px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("?", 0, 1);
+      ctx.restore();
+    }
+    for (const o of items.oils) {
+      ctx.fillStyle = "rgba(20, 16, 32, 0.85)";
+      ctx.beginPath();
+      ctx.ellipse(o.x, o.y, 40, 32, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (const r of items.rockets) {
+      ctx.save();
+      ctx.translate(r.x, r.y);
+      ctx.rotate(r.a);
+      ctx.fillStyle = "#e8423f";
+      ctx.fillRect(-15, -5, 30, 10);
+      ctx.fillStyle = "#ffb04a";
+      ctx.beginPath();
+      ctx.moveTo(-15, -4);
+      ctx.lineTo(-30 - Math.random() * 8, 0);
+      ctx.lineTo(-15, 4);
+      ctx.fill();
+      ctx.restore();
+    }
+    for (const k of karts) {
+      if (!(k.shieldTimer > 0)) continue;
+      ctx.strokeStyle = "rgba(127, 227, 255, 0.85)";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(k.x, k.y, 48, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  function draw2d({ track, karts, me, ghost, weather, photo, showStartMarker = false, items = null, itemTime = 0 }, dt) {
     clock += dt;
     const focus = me ?? karts[0];
     const chase = photo ? true : cameraMode !== "fixed";
@@ -820,6 +873,7 @@ export function createRenderer(canvas, canvas3d = null) {
     rememberMarks(karts);
     drawMarks();
 
+    drawItems2d(items, itemTime, karts);
     particles.draw(ctx);
     if (ghost) drawGhost(ghost);
     const ordered = [...karts].sort((a, b) => a.y - b.y);

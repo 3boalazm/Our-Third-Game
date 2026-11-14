@@ -411,3 +411,41 @@ html.short .hud-box.right .nitro-status {
 @media(max-width:900px){.garage-layout.garage-3d{grid-template-columns:1fr 1fr}}
 @media(max-width:650px){.garage-layout.garage-3d{grid-template-columns:1fr}.garage-stage{min-height:300px}.garage-tab-body{max-height:none}.garage-grid.swatch-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .garage-stage-top .coin-chip{flex:0 0 auto}
+
+/* ---------- items on the HUD ---------- */
+.item-slot{position:relative;display:grid;width:58px;height:58px;margin-top:8px;place-items:center;border:2px solid rgba(255,255,255,.22);border-radius:14px;background:rgba(8,14,26,.72);box-shadow:0 6px 18px rgba(0,0,0,.35);pointer-events:none}
+.item-slot .item-icon{font-size:30px;line-height:1}
+.item-slot small{position:absolute;right:4px;bottom:2px;color:#9fb3cf;font-size:9px;font-weight:900}
+.item-slot.ready{border-color:#ffd166;box-shadow:0 0 0 3px rgba(255,209,102,.25),0 0 18px rgba(255,209,102,.35)}
+.item-slot.rolling .item-icon{animation:item-roll .12s linear infinite}
+.item-slot.shielded{border-color:#7fe3ff}
+@keyframes item-roll{50%{transform:translateY(-2px) scale(1.08)}}
+.item-touch{font-size:26px}.item-touch.ready{border-color:#ffd166!important;box-shadow:0 0 16px rgba(255,209,102,.45)}
+
+/* ---------- championship ---------- */
+.cup-table{margin:4px 0 10px;padding:10px 12px;border:1px solid rgba(160,190,240,.22);border-radius:12px;background:rgba(90,130,210,.08)}
+.cup-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}.cup-head span{color:#a9c4ef;font-size:10px;font-weight:900;letter-spacing:.12em}.cup-head strong{color:#ffd77a;font-size:10px;letter-spacing:.14em}
+.cup-table ol{display:flex;flex-direction:column;gap:3px;margin:0;padding:0;list-style:none}
+.cup-table li{display:grid;grid-template-columns:12px 1fr auto 60px;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;background:rgba(255,255,255,.04);color:#dfe8f5;font-size:12px}
+.cup-table li.me{outline:1px solid #82aaff;background:rgba(107,151,225,.14)}
+.cup-table li i{width:10px;height:10px;border-radius:50%}.cup-table .gain{color:#8ff0c4;font-size:11px}.cup-table .pts{text-align:right;color:#fff}
+.cup-picker,.podium-card{display:flex;flex-direction:column;gap:12px}
+.cup-picker h1,.podium-card h1{margin:0}.cup-picker-sub{margin:0;color:#9fb0c7;font-size:12px}
+.cup-list{display:flex;flex-direction:column;gap:8px}
+.cup-option{display:grid;grid-template-columns:46px 1fr auto;align-items:center;gap:12px;padding:12px;border:1px solid rgba(172,195,228,.18);border-radius:13px;background:rgba(8,17,29,.55);color:#e6eef9;text-align:left;cursor:pointer}
+.cup-option:hover:not(:disabled){border-color:#7da8f7;background:rgba(94,139,219,.16)}
+.cup-option.locked{opacity:.55;cursor:not-allowed}
+.cup-trophy{font-size:32px;text-align:center}.cup-text{display:flex;flex-direction:column;gap:3px}.cup-text strong{font-size:15px}.cup-text small{color:#9fb0c7;font-size:11px}.cup-text em{color:#7f93b0;font-size:10px;font-style:normal;text-transform:uppercase;letter-spacing:.06em}
+.podium{display:flex;justify-content:center;align-items:flex-end;gap:10px;margin:8px 0 2px}
+.podium-step{display:flex;width:31%;max-width:150px;flex-direction:column;align-items:center;gap:3px}
+.podium-step strong{color:#fff;font-size:13px}.podium-step small{color:#9fb0c7;font-size:11px}
+.podium-step.me strong{color:#ffd77a}
+.podium-trophy{font-size:34px}
+.podium-block{display:grid;width:100%;place-items:center;border-radius:10px 10px 4px 4px;background:linear-gradient(180deg,#5c86d8,#2c4a86);color:#fff;font-size:26px;font-weight:950}
+.podium-step.p1 .podium-block{height:96px;background:linear-gradient(180deg,#f6cf55,#b9871a)}
+.podium-step.p2 .podium-block{height:70px;background:linear-gradient(180deg,#d9e1ee,#8f9bb0)}
+.podium-step.p3 .podium-block{height:52px;background:linear-gradient(180deg,#e0a06a,#9a5a2a)}
+.podium-prize{margin:0;color:#ffd77a;font-size:13px;text-align:center}
+.hero-secondary-actions{flex-wrap:wrap}.hero-secondary-actions button{flex:1 1 30%}
+
+.cup-overlay{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:16px;background:rgba(3,7,14,.62);overflow-y:auto}.cup-overlay .card{max-width:520px;width:100%}

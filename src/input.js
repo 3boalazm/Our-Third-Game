@@ -9,7 +9,7 @@
 // "Buttons", on-screen arrows steer instead.
 
 const keys = new Set();
-const touch = { left: false, right: false, brake: false, drift: false, nitro: false };
+const touch = { left: false, right: false, brake: false, drift: false, nitro: false, item: false };
 let handlers = null;
 let steerValue = 0;
 let autoDriftOn = false;
@@ -262,6 +262,7 @@ export function gamepadInput(pad, bindings = padBindings) {
     brake: active(map.brake) || (spare(6) && value(6) > 0.15),
     drift: active(map.drift) || (spare(5) && pressed(5)),
     nitro: active(map.nitro) || (spare(4) && value(4) > 0.5),
+    item: pressed(6) || pressed(7),
     pause: pressed(9),
   };
 }
@@ -418,5 +419,6 @@ export function readInput(dt) {
       autoDriftOn ||
       !!pad?.drift,
     nitro: keys.has("Space") || keys.has("KeyX") || touch.nitro || !!pad?.nitro,
+    item: keys.has("KeyE") || keys.has("Enter") || touch.item || !!pad?.item,
   };
 }

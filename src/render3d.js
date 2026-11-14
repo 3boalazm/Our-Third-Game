@@ -845,6 +845,11 @@ export function createRenderer3D(canvas) {
       blob.position.y = 1.9;
       built.group.add(blob);
       root.add(built.group);
+      const shield = new THREE.Mesh(shieldGeo, shieldMat);
+      shield.position.y = 22;
+      shield.visible = false;
+      root.add(shield);
+      built.shield = shield;
       scene.add(root);
       m = { ...built, wheelStyle: kart.wheels, spoiler: kart.spoiler, root, lastA: kart.a, roll: 0, pitch: 0, lastSpeed: kart.speed ?? 0, wheelTurn: 0 };
       karts.set(kart, m);
@@ -854,6 +859,12 @@ export function createRenderer3D(canvas) {
 
   function placeKart(m, kart, dt) {
     m.root.position.set(kart.x, 0, kart.y);
+    if (m.shield) {
+      const t = kart.shieldTimer ?? 0;
+      // blinks in its last two seconds
+      m.shield.visible = t > 0 && (t > 2 || Math.floor(t * 8) % 2 === 0);
+      if (m.shield.visible) m.shield.scale.setScalar(1 + 0.04 * Math.sin(performance.now() / 120));
+    }
     m.group.rotation.y = -kart.a;
     // lean into turns, nose up when accelerating, dip when braking
     const turnRate = dt > 0 ? angleDiff(kart.a, m.lastA) / dt : 0;
@@ -937,6 +948,113 @@ export function createRenderer3D(canvas) {
     markGeo.attributes.color.needsUpdate = true;
   }
 
+
+  // ---------------- items: boxes, rockets, oil and shields
+  const boxTex = canvasTexture(128, 128, (c, w, h) => {
+    const g = c.createLinearGradient(0, 0, w, h);
+    g.addColorStop(0, "#ff5ac8");
+    g.addColorStop(0.35, "#ffd35a");
+    g.addColorStop(0.7, "#5ae0ff");
+    g.addColorStop(1, "#8a6bff");
+    c.fillStyle = g;
+    c.fillRect(0, 0, w, h);
+    c.fillStyle = "rgba(255,255,255,0.25)";
+    c.fillRect(6, 6, w - 12, h - 12);
+    c.strokeStyle = "rgba(255,255,255,0.9)";
+    c.lineWidth = 6;
+    c.strokeRect(5, 5, w - 10, h - 10);
+    c.fillStyle = "#ffffff";
+    c.font = "900 86px system-ui, sans-serif";
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    c.shadowColor = "rgba(0,0,0,0.35)";
+    c.shadowBlur = 6;
+    c.fillText("?", w / 2, h / 2 + 4);
+  }, false);
+  const boxMat = new THREE.MeshLambertMaterial({ map: boxTex, transparent: true, opacity: 0.92, emissive: 0x222222 });
+  const boxGeo = new THREE.BoxGeometry(30, 30, 30);
+  const boxMeshes = [];
+  const rocketMeshes = [];
+  const oilMeshes = [];
+  const rocketBody = new THREE.MeshLambertMaterial({ color: 0xe8423f });
+  const rocketFin = new THREE.MeshLambertMaterial({ color: 0xf2f4f8 });
+  const oilMat = new THREE.MeshPhongMaterial({ color: 0x15121f, shininess: 90, specular: 0x8a7cff, transparent: true, opacity: 0.92, depthWrite: false });
+  const oilGeo = new THREE.CircleGeometry(40, 20);
+  oilGeo.rotateX(-Math.PI / 2);
+  const shieldMat = new THREE.MeshBasicMaterial({ color: 0x7fe3ff, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending });
+  const shieldGeo = new THREE.SphereGeometry(52, 20, 14);
+
+  function makeRocket() {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 30, 10), rocketBody);
+    body.rotation.z = Math.PI / 2;
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(5, 12, 10), rocketFin);
+    nose.rotation.z = -Math.PI / 2;
+    nose.position.x = 21;
+    g.add(body, nose);
+    for (const a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+      const fin = box(8, 1.2, 9, rocketFin, -12, Math.cos(a) * 6, Math.sin(a) * 6);
+      fin.rotation.x = a;
+      g.add(fin);
+    }
+    const flame = new THREE.Mesh(
+      new THREE.ConeGeometry(5, 22, 10, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xffb04a, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    flame.rotation.z = Math.PI / 2;
+    flame.position.x = -26;
+    g.add(flame);
+    g.userData.flame = flame;
+    scene.add(g);
+    return g;
+  }
+
+  function syncItems(items, time, clock) {
+    const boxes = items?.boxes ?? [];
+    while (boxMeshes.length < boxes.length) {
+      const m = new THREE.Mesh(boxGeo, boxMat);
+      scene.add(m);
+      boxMeshes.push(m);
+    }
+    boxMeshes.forEach((m, i) => {
+      const b = boxes[i];
+      if (!b) {
+        m.visible = false;
+        return;
+      }
+      const back = time - b.activeAt; // seconds since it came back
+      m.visible = time >= b.activeAt;
+      const pop = back < 0.3 ? Math.max(0.05, back / 0.3) : 1;
+      m.position.set(b.x, 26 + Math.sin(clock * 2.6 + i) * 4, b.y);
+      m.rotation.set(0.5, clock * 1.6 + i, 0.3);
+      m.scale.setScalar(pop);
+    });
+    const rockets = items?.rockets ?? [];
+    while (rocketMeshes.length < rockets.length) rocketMeshes.push(makeRocket());
+    rocketMeshes.forEach((m, i) => {
+      const r = rockets[i];
+      m.visible = !!r;
+      if (!r) return;
+      m.position.set(r.x, 22, r.y);
+      m.rotation.set(0, -r.a, 0);
+      m.userData.flame.scale.set(1, 0.8 + Math.random() * 0.5, 1);
+    });
+    const oils = items?.oils ?? [];
+    while (oilMeshes.length < oils.length) {
+      const m = new THREE.Mesh(oilGeo, oilMat);
+      m.renderOrder = 2;
+      scene.add(m);
+      oilMeshes.push(m);
+    }
+    oilMeshes.forEach((m, i) => {
+      const o = oils[i];
+      m.visible = !!o;
+      if (!o) return;
+      m.position.set(o.x, 1.2, o.y);
+      m.scale.set(1, 1, 0.8);
+    });
+  }
+
   // ---------------- camera
   function placeCamera(focus, photo, dt, shake) {
     const speedRatio = Math.min(1, Math.max(0, (focus.speed ?? 0) / Physics.maxSpeed));
@@ -995,7 +1113,7 @@ export function createRenderer3D(canvas) {
     return { x: ((vec.x + 1) / 2) * width, y: ((1 - vec.y) / 2) * height, scale };
   }
 
-  function render({ track, karts: list, me, ghost, weather, photo, marks, markCount, clock, shake }, dt) {
+  function render({ track, karts: list, me, ghost, weather, photo, marks, markCount, clock, shake, items, itemTime = 0 }, dt) {
     if (!world || world.id !== track.def.id) {
       for (const [, m] of karts) scene.remove(m.root);
       karts.clear();
@@ -1007,6 +1125,7 @@ export function createRenderer3D(canvas) {
     syncKarts(list, dt);
     syncGhost(ghost);
     syncMarks(marks, markCount);
+    syncItems(items, itemTime, clock);
 
     world.padTex.offset.x = -((clock * 1.4) % 1);
     world.pickups.forEach((p, i) => {

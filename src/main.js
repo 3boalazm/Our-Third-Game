@@ -35,6 +35,19 @@ import {
   upgradeCost,
 } from "./garage.js";
 import { createGarageView } from "./garage3d.js";
+import { ItemInfo, ItemKinds, createItems } from "./items.js";
+import {
+  Cups,
+  cupById,
+  cupStandings,
+  finishCup,
+  isFinished,
+  isUnlocked,
+  readCupRecords,
+  recordRace,
+  startCupRun,
+  trophyFor,
+} from "./cups.js";
 import {
   DefaultPadBindings,
   PadButtonNames,
@@ -141,6 +154,7 @@ function readPrefs() {
     records: readRecords(saved.records),
     // coins, upgrades and bought parts (see garage.js)
     ...readGarage(saved),
+    cupRecords: readCupRecords(saved.cupRecords),
     dailyCoinsDay: typeof saved.dailyCoinsDay === "string" || typeof saved.dailyCoinsDay === "number" ? saved.dailyCoinsDay : null,
     weather: WeatherOptions.some((w) => w.id === saved.weather) ? saved.weather : "clear",
     padBindings: normalizePadBindings(saved.padBindings),
@@ -205,6 +219,7 @@ root.innerHTML = `
   <div id="hud" hidden>
     <div class="hud-left">
       <div class="hud-box"><span id="lap"></span><span id="pos"></span><span id="weather" hidden></span></div>
+      <div class="item-slot" id="item-slot" hidden><span class="item-icon" id="item-icon"></span><small id="item-key">E</small></div>
       <div class="hud-buttons">
         <button type="button" id="pause-btn" aria-label="Pause">&#10074;&#10074;</button>
         <button type="button" id="mute-btn" aria-label="Sound on or off"></button>
@@ -259,6 +274,7 @@ root.innerHTML = `
       <button type="button" class="steer" data-touch="right" aria-label="Steer right">&#9654;</button>
     </div>
     <div class="touch-right">
+      <button type="button" class="mid item-touch" id="item-touch-btn" data-touch="item" aria-label="Use item" hidden><span id="item-touch-icon"></span></button>
       <button type="button" class="mid" id="drift-btn" data-touch="drift" aria-label="Drift" hidden>Drift</button>
       <button type="button" class="large nitro-touch" id="nitro-touch-btn" data-touch="nitro" aria-label="Nitro boost, 30 percent charged">
         <strong>NITRO</strong><small id="nitro-button-value">30%</small>
@@ -583,9 +599,10 @@ function startDemo(trackId) {
 
 let activeGarageView = () => null;
 
-function startRace({ trackId, laps, kartsSpec, mode = "race", weather = prefs.weather, daily = false }) {
+function startRace({ trackId, laps, kartsSpec, mode = "race", weather = prefs.weather, daily = false, items = null, cup = false }) {
   activeGarageView()?.dispose();
   activeGarageView = () => null;
+  if (!cup) cupRun = null;
   padRemap = null;
   padRemapRender = null;
   replayBuffer = [];
@@ -627,7 +644,11 @@ function startRace({ trackId, laps, kartsSpec, mode = "race", weather = prefs.we
     // for the coins at the end: drifts, nitro canisters and new best positions
     stats: { drifts: 0, pickups: 0, overtakes: 0, bestRank: karts.length },
     coins: null,
+    // item boxes: in races against bots (not time trials, not online)
+    items: (items ?? (mode === "race" && !karts.some((k) => k.isRemote))) ? createItems(t) : null,
+    cup,
   };
+  lastItemPress = false;
   sendTimer = 0;
   wrongWay = 0;
   wrongWarned = false;
@@ -1140,6 +1161,8 @@ function update(dt, now) {
     if (kart.isMe && !kart.finished && !(import.meta.env.DEV && window.__kartAuto)) {
       input = readInput(dt);
       lastInput = input;
+      if (world.items && racing && input.item && !lastItemPress) world.items.use(kart, world.raceTime, standings());
+      lastItemPress = !!input.item;
     } else {
       input = botInput(kart, t);
       if (kart.isMe) {
@@ -1162,6 +1185,11 @@ function update(dt, now) {
 
   resolveContacts(karts);
   for (const kart of karts) handleBumpEvents(kart);
+  if (world.items && (racing || world.state === "finished")) {
+    if (import.meta.env.DEV && window.__kartAuto && me?.item) world.items.use(me, world.raceTime, standings());
+    world.items.update(dt, world.raceTime, karts, standings());
+    handleItemEvents();
+  }
   recordTrialPoint();
   updateGhost();
   rememberReplay(dt);
@@ -1205,6 +1233,7 @@ function setText(key, element, text) {
 }
 
 function updateHud() {
+  updateItemHud();
   if (!world || !me || world.state === "demo") {
     return;
   }
@@ -1487,6 +1516,7 @@ function showMenu() {
                 <div class="hero-secondary-actions">
                   <button type="button" data-act="trial"><span class="action-icon">◷</span><span><strong>TIME TRIAL</strong><small data-role="trial-sub">Set a lap. Chase your ghost.</small></span><b>→</b></button>
                   <button type="button" data-act="online"><span class="action-icon">◎</span><span><strong>RACE A FRIEND</strong><small>Challenge someone online.</small></span><b>→</b></button>
+                  <button type="button" data-act="cups"><span class="action-icon">🏆</span><span><strong>CHAMPIONSHIP</strong><small data-role="cups-sub">Three cups. Win them all.</small></span><b>→</b></button>
                 </div>
               </div>
               <div class="hero-track-stamp"><span>TRACK</span><strong data-role="hero-track-stamp">SUNNY LOOP</strong><i>01 / 03</i></div>
@@ -2025,6 +2055,11 @@ function showMenu() {
     startImmersive();
     startTimeTrial();
   });
+  element.querySelector('[data-act="cups"]').addEventListener("click", () => showCupPicker());
+  const golds = Cups.filter((cup) => prefs.cupRecords[cup.id] === 1).length;
+  element.querySelector('[data-role="cups-sub"]').textContent = golds
+    ? `${golds} of ${Cups.length} cups won`
+    : "Three cups. Win them all.";
   element.querySelector('[data-act="online"]').addEventListener("click", () => {
     window.location.href = `${window.location.pathname}?online=host&laps=${prefs.laps}&track=${prefs.track}`;
   });
@@ -2412,7 +2447,9 @@ function showPause() {
   panel.querySelector('[data-act="replay"]')?.addEventListener("click", enterReplay);
   panel.querySelector('[data-act="photo"]')?.addEventListener("click", enterPhotoMode);
   panel.querySelector('[data-act="restart"]')?.addEventListener("click", () => {
-    if (world?.mode === "trial") {
+    if (world?.cup && cupRun) {
+      startCupRace();
+    } else if (world?.mode === "trial") {
       if (world.daily) startDailyChallenge();
       else startTimeTrial();
     } else {
@@ -2465,6 +2502,235 @@ function hideResults() {
   resultsEl = null;
 }
 
+// ---------- items ----------
+
+let lastItemPress = false;
+let itemRollShown = 0;
+
+// Sounds, toasts and sparks for what the item system reported this step.
+function handleItemEvents() {
+  const items = world?.items;
+  if (!items) return;
+  for (const e of items.events) {
+    const mine = e.kart === me;
+    if (e.type === "box" && mine) {
+      audio.pad();
+      vibrate(10);
+    } else if (e.type === "got" && mine) {
+      showToast(`${ItemInfo[e.kind].icon} ${ItemInfo[e.kind].name.toUpperCase()} READY · ${isTouchDevice ? "TAP ITEM" : "PRESS E"}`, "good", 1300);
+    } else if (e.type === "use") {
+      if (mine || Math.hypot(e.kart.x - (me?.x ?? 0), e.kart.y - (me?.y ?? 0)) < 900) audio.boost();
+      if (e.kind === "boost") {
+        const fx = renderer.particles;
+        for (let i = 0; i < 10; i += 1) fx.emit("flame", e.kart.x - Math.cos(e.kart.a) * 24, e.kart.y - Math.sin(e.kart.a) * 24, rand(200), rand(200), 0.35, 8, "#ffe27a");
+      }
+    } else if (e.type === "hit") {
+      const fx = renderer.particles;
+      for (let i = 0; i < 16; i += 1) fx.emit("spark", e.kart.x, e.kart.y, rand(460), rand(460), 0.4, 3, e.kind === "oil" ? "#c9c1ff" : "#ffb35a");
+      if (mine) {
+        audio.crash(0.8);
+        vibrate(60);
+        renderer.shake(9);
+        showToast(e.kind === "oil" ? "OIL! YOU SPUN OUT" : "HIT BY A ROCKET!", "bad", 1300);
+      } else if (e.by === me) {
+        showToast(`${e.kind === "oil" ? "OIL" : "ROCKET"} HIT ${e.kart.name.toUpperCase()}!`, "good", 1200);
+      }
+    } else if (e.type === "blocked") {
+      if (mine) showToast("SHIELD BLOCKED IT!", "good", 1100);
+      else if (e.by === me) showToast(`${e.kart.name.toUpperCase()}'S SHIELD BLOCKED IT`, "warn", 1100);
+    } else if (e.type === "boom") {
+      const fx = renderer.particles;
+      for (let i = 0; i < 12; i += 1) fx.emit("flame", e.x, e.y, rand(300), rand(300), 0.4, 10, i % 2 ? "#ff7a2f" : "#ffd36b");
+    }
+  }
+  items.events.length = 0;
+}
+
+// The item slot on the HUD (and the touch button).
+function updateItemHud() {
+  const slot = $("item-slot");
+  const touchBtn = $("item-touch-btn");
+  const on = !!(world?.items && me && world.state !== "demo");
+  slot.hidden = !on;
+  if (touchBtn) touchBtn.hidden = !on || !isTouchDevice;
+  if (!on) return;
+  let icon = "";
+  if (me.itemRoll > 0) {
+    itemRollShown = (itemRollShown + 1) % (ItemKinds.length * 4);
+    icon = ItemInfo[ItemKinds[Math.floor(itemRollShown / 4)]].icon;
+  } else if (me.item) {
+    icon = ItemInfo[me.item].icon;
+  }
+  slot.classList.toggle("ready", !!me.item);
+  slot.classList.toggle("rolling", me.itemRoll > 0);
+  slot.classList.toggle("shielded", me.shieldTimer > 0);
+  $("item-icon").textContent = icon;
+  $("item-key").textContent = isTouchDevice ? "" : "E";
+  if (touchBtn) {
+    $("item-touch-icon").textContent = icon || "ITEM";
+    touchBtn.classList.toggle("ready", !!me.item);
+  }
+}
+
+// ---------- championship ----------
+
+let cupRun = null;
+const CupColors = ["#ff5a5f", "#2bb673", "#f5a623"];
+
+function startCup(cupId) {
+  const cup = cupById(cupId);
+  if (!cup || !isUnlocked(prefs.cupRecords, cupId)) return;
+  const catchUp = botCatchUp(prefs.upgrades);
+  const skills = (BotSkills[cup.difficulty] ?? BotSkills.normal).map((skill) => skill * catchUp);
+  const specs = [
+    ...cup.rivals.map((name, i) => ({ id: `cup${i}`, name, color: CupColors[i], bot: true, skill: skills[i] })),
+    { id: "me", name: "You", color: prefs.color, livery: prefs.livery, wheels: prefs.wheels, spoiler: prefs.spoiler, isMe: true },
+  ];
+  cupRun = { cup, specs, run: startCupRun(cupId, specs.map((spec) => spec.id)) };
+  startCupRace();
+}
+
+function startCupRace() {
+  if (!cupRun) return;
+  const { cup, run, specs } = cupRun;
+  if (isFinished(run)) return;
+  const race = cup.races[run.round];
+  // the grid is the championship order reversed: the leader starts at the back
+  const standing = run.round > 0 ? cupStandings(run) : specs.map((spec) => spec.id);
+  const grid = [...standing].reverse().map((id) => ({ ...specs.find((spec) => spec.id === id) }));
+  startRace({ trackId: race.trackId, laps: cup.laps, kartsSpec: grid, mode: "race", weather: race.weather, items: true, cup: true });
+  showToast(`${cup.name.toUpperCase()} · RACE ${run.round + 1} OF ${cup.races.length}`, "good", 2200);
+}
+
+function cupName(id) {
+  return cupRun?.specs.find((spec) => spec.id === id)?.name ?? id;
+}
+
+function renderCupTable(root, gained) {
+  const box = root.querySelector('[data-role="cup"]');
+  if (!box || box.dataset.round === String(cupRun.run.round)) return;
+  box.dataset.round = String(cupRun.run.round);
+  box.hidden = false;
+  const { cup, run } = cupRun;
+  const head = document.createElement("div");
+  head.className = "cup-head";
+  head.innerHTML = `<span></span><strong></strong>`;
+  head.firstChild.textContent = `${cup.name.toUpperCase()} · AFTER RACE ${run.round} OF ${cup.races.length}`;
+  head.lastChild.textContent = isFinished(run) ? "FINAL" : "STANDINGS";
+  const list = document.createElement("ol");
+  for (const id of cupStandings(run)) {
+    const li = document.createElement("li");
+    if (id === "me") li.className = "me";
+    li.innerHTML = `<i></i><span class="name"></span><b class="gain"></b><strong class="pts"></strong>`;
+    li.querySelector("i").style.background = cupRun.specs.find((spec) => spec.id === id)?.color ?? "#fff";
+    li.querySelector(".name").textContent = cupName(id);
+    li.querySelector(".gain").textContent = `+${gained[id] ?? 0}`;
+    li.querySelector(".pts").textContent = `${run.points[id]} pts`;
+    list.append(li);
+  }
+  box.replaceChildren(head, list);
+}
+
+function showPodium() {
+  if (!cupRun) return;
+  const { cup, run } = cupRun;
+  const order = cupStandings(run);
+  const result = world?.cupResult ?? { place: order.indexOf("me") + 1, prize: 0, improved: false };
+  hideResults();
+  const trophy = trophyFor(result.place);
+  const panel = card(`
+    <div class="podium-card">
+      <span class="eyebrow">${cup.name.toUpperCase()} · FINAL STANDINGS</span>
+      <h1 data-role="title"></h1>
+      <div class="podium" data-role="podium"></div>
+      <p class="podium-prize" data-role="prize"></p>
+      <div class="row-buttons">
+        <button type="button" class="big primary" data-act="cup-again">Race this cup again</button>
+        <a class="big" data-role="menu">Menu</a>
+      </div>
+    </div>
+  `);
+  panel.classList.add("results-card");
+  panel.querySelector('[data-role="title"]').textContent =
+    result.place === 1 ? "Champion!" : trophy ? `${ordinal(result.place)} place, on the podium!` : `${ordinal(result.place)} place`;
+  const podium = panel.querySelector('[data-role="podium"]');
+  for (const place of [2, 1, 3]) {
+    const id = order[place - 1];
+    if (!id) continue;
+    const step = document.createElement("div");
+    step.className = `podium-step p${place}${id === "me" ? " me" : ""}`;
+    step.innerHTML = `<span class="podium-trophy"></span><strong></strong><small></small><div class="podium-block">${place}</div>`;
+    step.querySelector(".podium-trophy").textContent = place === 1 ? "🏆" : place === 2 ? "🥈" : "🥉";
+    step.querySelector("strong").textContent = cupName(id);
+    step.querySelector("small").textContent = `${run.points[id]} pts`;
+    podium.append(step);
+  }
+  const prize = panel.querySelector('[data-role="prize"]');
+  prize.textContent = result.prize
+    ? `Prize: +${result.prize.toLocaleString("en-US")} coins${result.improved ? ` · new best: ${trophy} trophy` : ""}`
+    : "Finish in the top three to win a prize and unlock the next cup.";
+  const next = Cups[Cups.findIndex((c) => c.id === cup.id) + 1];
+  if (next && result.improved && trophy && isUnlocked(prefs.cupRecords, next.id)) {
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = `${next.name} unlocked!`;
+    prize.append(document.createElement("br"), badge);
+  }
+  panel.querySelector('[data-role="menu"]').href = window.location.pathname;
+  panel.querySelector('[data-act="cup-again"]').addEventListener("click", () => startCup(cup.id));
+  audio.finish(result.place === 1);
+  const wrap = document.createElement("div");
+  wrap.className = "overlay";
+  wrap.append(panel);
+  screen.replaceChildren(wrap);
+  resultsEl = wrap;
+}
+
+// The cup chooser opened from the home page.
+function showCupPicker() {
+  const panel = card(`
+    <div class="cup-picker">
+      <span class="eyebrow">CHAMPIONSHIP</span>
+      <h1>Choose a cup</h1>
+      <p class="cup-picker-sub">Three races in a row against the same rivals. Points: 10, 6, 4, 2. Item boxes are on.</p>
+      <div class="cup-list" data-role="cups"></div>
+      <button type="button" class="big" data-act="close">Back</button>
+    </div>
+  `);
+  panel.classList.add("results-card");
+  const list = panel.querySelector('[data-role="cups"]');
+  for (const cup of Cups) {
+    const unlocked = isUnlocked(prefs.cupRecords, cup.id);
+    const best = prefs.cupRecords[cup.id];
+    const trophy = trophyFor(best);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `cup-option${unlocked ? "" : " locked"}`;
+    btn.disabled = !unlocked;
+    btn.innerHTML = `<span class="cup-trophy"></span><span class="cup-text"><strong></strong><small></small><em></em></span><span class="cup-prize"></span>`;
+    btn.querySelector(".cup-trophy").textContent = trophy === "gold" ? "🏆" : trophy === "silver" ? "🥈" : trophy === "bronze" ? "🥉" : unlocked ? "🏁" : "🔒";
+    btn.querySelector("strong").textContent = cup.name;
+    btn.querySelector("small").textContent = unlocked ? cup.blurb : `Finish on the podium in the ${Cups[Cups.indexOf(cup) - 1].name} to unlock.`;
+    btn.querySelector("em").textContent = `${cup.races.map((r) => trackById(r.trackId).name).join(" · ")} · ${cup.laps} laps · ${cup.difficulty}`;
+    btn.querySelector(".cup-prize").innerHTML = `<span class="coin-chip small">${cup.prizes[0].toLocaleString("en-US")}</span>`;
+    btn.addEventListener("click", () => {
+      if (isTouchDevice && prefs.steer === "tilt") enableTilt();
+      userLeftFullscreen = false;
+      startImmersive();
+      startCup(cup.id);
+    });
+    list.append(btn);
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "overlay cup-overlay";
+  wrap.append(panel);
+  wrap.addEventListener("click", (event) => {
+    if (event.target === wrap) wrap.remove();
+  });
+  panel.querySelector('[data-act="close"]').addEventListener("click", () => wrap.remove());
+  screen.append(wrap);
+}
+
 // Coins for the race that just ended (once per race).
 function awardCoins() {
   if (!world || !me || world.coins || world.mode === "demo") return;
@@ -2482,6 +2748,14 @@ function awardCoins() {
   });
   if (daily) prefs.dailyCoinsDay = challenge.day;
   prefs.coins += result.total;
+  if (world.cup && cupRun) {
+    // the karts still racing are placed in their current order
+    world.cupGained = recordRace(cupRun.run, order.map((kart) => kart.id));
+    if (isFinished(cupRun.run)) {
+      world.cupResult = finishCup(cupRun.run, prefs.cupRecords, "me");
+      prefs.coins += world.cupResult.prize;
+    }
+  }
   savePrefs();
   world.coins = result;
 }
@@ -2495,6 +2769,7 @@ function showResults() {
     <h1 data-role="title"></h1>
     <p class="results-sub" data-role="bestlap"></p>
     <ol class="results" data-role="rows"></ol>
+    <div class="cup-table" data-role="cup" hidden></div>
     <div class="coin-reward" data-role="coins" hidden></div>
     <div class="row-buttons">
       <button type="button" class="big primary" data-act="again"></button>
@@ -2510,14 +2785,19 @@ function showResults() {
     again.textContent = "Waiting for host";
     panel.querySelector('[data-role="note"]').textContent = "The host can start a rematch.";
   } else {
-    again.textContent = trial ? "Try again" : online ? "Rematch" : "Race again";
+    again.textContent = world?.cup && cupRun
+      ? isFinished(cupRun.run) ? "See the podium" : `Next race (${cupRun.run.round + 1}/3)`
+      : trial ? "Try again" : online ? "Rematch" : "Race again";
     panel.querySelector('[data-role="note"]').textContent = trial
       ? world.daily
         ? "The daily challenge is counted for today; Try again keeps the same challenge."
         : "Beat the ghost and it is saved on this track."
       : "";
     again.addEventListener("click", () => {
-      if (online) {
+      if (world?.cup && cupRun) {
+        if (isFinished(cupRun.run)) showPodium();
+        else startCupRace();
+      } else if (online) {
         hostStartsRace();
       } else if (trial) {
         if (world.daily) startDailyChallenge();
@@ -2538,6 +2818,7 @@ function showResults() {
 
 function fillResults() {
   if (!resultsEl || !world || !me) return;
+  if (resultsEl.querySelector('.podium-card')) return; // the cup podium has its own content
   const order = standings();
   const place = order.indexOf(me) + 1;
   const done = order.every((kart) => kart.finished);
@@ -2609,6 +2890,7 @@ function fillResults() {
     wallet.textContent = `Wallet: ${prefs.coins.toLocaleString("en-US")} coins · spend them in the Garage`;
     coinBox.append(head, list, wallet);
   }
+  if (world.cup && cupRun && world.cupGained) renderCupTable(resultsEl, world.cupGained);
   const rows = resultsEl.querySelector('[data-role="rows"]');
   rows.replaceChildren(
     ...order.map((kart, i) => {
@@ -2841,6 +3123,8 @@ function frameInner(now) {
         weather: world.weather,
         photo,
         showStartMarker: world.state === "countdown" || (world.goFlash ?? 0) > 0,
+        items: world.items,
+        itemTime: world.raceTime,
       },
       paused && !photo ? 0 : frameDt,
     );
@@ -2896,6 +3180,12 @@ if (import.meta.env.DEV) {
       if (mode === "trial") startTimeTrial();
       else startSolo();
       prefs.track = before;
+    },
+    cup(id) {
+      startCup(id);
+    },
+    get cupRun() {
+      return cupRun;
     },
     // advance the simulation without waiting for animation frames
     step(dt = FixedStep, now = performance.now()) {
