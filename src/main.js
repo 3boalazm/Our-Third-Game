@@ -223,6 +223,7 @@ root.innerHTML = `
   <button type="button" id="tilt-prompt" hidden>Tap to turn on tilt steering</button>
   <div id="touch" hidden>
     <div id="tilt-gauge" hidden><i></i></div>
+    <button type="button" id="tilt-reset-btn" class="tilt-reset-btn" aria-label="Reset gyroscope center">↺ RESET GYRO</button>
     <div class="touch-left">
       <button type="button" class="brake" data-touch="brake" aria-label="Brake">Brake</button>
       <button type="button" class="steer" data-touch="left" aria-label="Steer left">&#9664;</button>
@@ -272,6 +273,7 @@ const screen = $("screen");
 const pauseButton = $("pause-btn");
 const muteButton = $("mute-btn");
 const tiltGauge = $("tilt-gauge");
+const tiltResetButton = $("tilt-reset-btn");
 const tiltPrompt = $("tilt-prompt");
 const driftButton = $("drift-btn");
 const fsButton = $("fs-btn");
@@ -436,6 +438,7 @@ muteButton.addEventListener("click", () => {
   renderMute();
 });
 pauseButton.addEventListener("click", () => togglePause());
+tiltResetButton.addEventListener("click", resetGyroCalibration);
 photoEl.querySelector('[data-act="photo-exit"]').addEventListener("click", exitPhotoMode);
 photoEl.querySelector('[data-act="photo-save"]').addEventListener("click", savePhoto);
 replayEl.querySelector('[data-act="replay-exit"]').addEventListener("click", exitReplay);
@@ -589,11 +592,11 @@ function showTip() {
   prefs.tipSeen = true;
   savePrefs();
   let text =
-    "Nitro starts at 30%. Hold Space to spend it; it slowly refills when unused. Drift through a corner, then release on the road for a faster refill. Blue pads are separate short boosts.";
+    "Nitro starts at 30%. Collect glowing NITRO canisters on the road for +35% fuel. Hold Space to boost; clean drifts refill faster, and blue chevrons give a separate short burst.";
   if (isTouchDevice) {
     text = prefs.steer === "tilt"
-      ? "Nitro starts at 30%. Hold Nitro to spend it. Turn hard to slide, then straighten on the road to refill faster. Blue pads give a separate short boost."
-      : "Nitro starts at 30%. Hold Nitro to spend it. Hold Drift through a turn, then release on the road to refill faster. Blue pads give a separate short boost.";
+      ? "Collect glowing NITRO canisters on the road for +35% fuel. Hold Nitro to boost; turn hard to drift, then straighten for a refill. Blue pads give a separate short burst."
+      : "Collect glowing NITRO canisters on the road for +35% fuel. Hold Nitro to boost; drift through a turn, then release for a refill. Blue pads give a separate short burst.";
   }
   tipEl.textContent = text;
   tipEl.hidden = false;
@@ -935,6 +938,29 @@ function handleKartEvents(kart) {
     }
     kart.padHit = 0;
   }
+  if (kart.nitroPickupHit) {
+    if (mine) {
+      const gain = Math.round((kart.nitroPickupReward ?? 0) * 100);
+      for (let i = 0; i < 18; i += 1) {
+        fx.emit(
+          "spark",
+          kart.x,
+          kart.y,
+          rand(280),
+          rand(280),
+          0.48,
+          4,
+          i % 2 === 0 ? "#9ceeff" : "#ffffff",
+        );
+      }
+      showToast(gain > 0 ? `NITRO CANISTER +${gain}%` : "NITRO REFILLED", "good", 1450);
+      audio.boost();
+      vibrate(28);
+      renderer.shake(3);
+    }
+    kart.nitroPickupHit = 0;
+    kart.nitroPickupReward = 0;
+  }
   if (kart.driftReward > 0) {
     if (mine) {
       const gain = Math.round((kart.driftNitroReward ?? 0) * 100);
@@ -1008,6 +1034,8 @@ function update(dt, now) {
       if (tick % 3 === 0) emitEffects(kart);
       kart.hit = 0;
       kart.driftReward = 0;
+      kart.nitroPickupHit = 0;
+      kart.nitroPickupReward = 0;
     }
     resolveContacts(karts);
     for (const kart of karts) kart.bump = 0;
@@ -1205,6 +1233,7 @@ function updateHud() {
   const tilting = usingTilt();
   document.body.dataset.steer = tilting ? "tilt" : "buttons";
   tiltGauge.hidden = !tilting;
+  tiltResetButton.hidden = !(isTouchDevice && prefs.steer === "tilt");
   if (tilting) {
     tiltGauge.firstElementChild.style.left = `${50 + steerNow() * 50}%`;
   }
@@ -1455,6 +1484,7 @@ function showMenu() {
               <div class="setup-field"><span class="field-label">STEERING</span><div data-slot="steer"></div></div>
               <div class="setup-field" data-tilt-only><span class="field-label">TILT SENSITIVITY</span><div data-slot="sens"></div></div>
               <div class="setup-field" data-tilt-only><span class="field-label">TILT DIRECTION</span><div data-slot="flip"></div></div>
+              <div class="setup-field" data-tilt-only><span class="field-label">GYRO CENTER</span><div data-slot="calibrate"></div></div>
               <div class="setup-field"><span class="field-label">DRIFT</span><div data-slot="drift"></div></div>
               <div class="setup-field"><span class="field-label">CAMERA</span><div data-slot="camera"></div></div>
               <div class="setup-field"><span class="field-label">SCREEN ORIENTATION</span><div data-slot="screen"></div></div>
@@ -1750,6 +1780,12 @@ function showMenu() {
           "Tilt direction",
         ),
       );
+      const calibrate = document.createElement("button");
+      calibrate.type = "button";
+      calibrate.className = "gyro-calibrate-action";
+      calibrate.textContent = "↺ RESET GYRO CENTER";
+      calibrate.addEventListener("click", resetGyroCalibration);
+      element.querySelector('[data-slot="calibrate"]').replaceChildren(calibrate);
       element.querySelector('[data-slot="drift"]').replaceChildren(
         choice(
           [{ value: true, text: "Automatic" }, { value: false, text: "Button" }],
@@ -2109,6 +2145,37 @@ function savePhoto() {
   link.remove();
 }
 
+function resetGyroCalibration() {
+  if (!isTouchDevice || prefs.steer !== "tilt") return;
+  if (!tiltSupported()) {
+    showToast("MOTION SENSOR UNAVAILABLE · USE ARROWS", "warm", 1500);
+    return;
+  }
+  if (tiltStatus() === "denied") {
+    showToast("MOTION ACCESS BLOCKED · CHECK BROWSER SETTINGS", "warm", 1700);
+    return;
+  }
+
+  const finish = () => {
+    const centeredNow = recenterTilt();
+    resetInput();
+    showToast(
+      centeredNow ? "GYRO CENTERED · READY TO DRIVE" : "GYRO RESETTING · HOLD PHONE STEADY",
+      "good",
+      1400,
+    );
+  };
+
+  if (tiltStatus() === "granted") {
+    finish();
+    return;
+  }
+  enableTilt().then((status) => {
+    if (status === "granted") finish();
+    else showToast("TILT NOT AVAILABLE · USE ARROWS", "warm", 1500);
+  });
+}
+
 function showPause() {
   if (pauseEl || resultsEl || !world || !["racing", "countdown"].includes(world.state)) {
     return;
@@ -2132,7 +2199,7 @@ function showPause() {
       ${solo && replayBuffer.length >= 20 ? `<button type="button" class="big pause-action" data-act="replay"><strong>Replay last 10 s</strong><span>Watch the action again</span></button>` : ""}
       ${solo ? `<button type="button" class="big pause-action" data-act="photo"><strong>Photo mode</strong><span>Capture your best angle</span></button>` : ""}
       ${solo ? `<button type="button" class="big pause-action" data-act="restart"><strong>Restart ${world.mode === "trial" ? "time trial" : "race"}</strong><span>Start this session over</span></button>` : ""}
-      ${usingTilt() ? `<button type="button" class="big pause-action" data-act="recenter"><strong>Recenter tilt</strong><span>Reset your phone position</span></button>` : ""}
+      ${isTouchDevice && prefs.steer === "tilt" ? `<button type="button" class="big pause-action" data-act="recenter"><strong>Reset gyro center</strong><span>Hold the phone comfortably straight, then tap</span></button>` : ""}
     </div>
     <div class="pause-adjustments"><span class="pause-adjust-label">QUICK SETTINGS</span></div>
     <a class="pause-quit" data-role="menu">${solo ? "Quit to menu" : "Leave race"} <b>↗</b></a>
@@ -2169,7 +2236,7 @@ function showPause() {
 
   panel.querySelector('[data-act="resume"]').addEventListener("click", () => togglePause());
   panel.querySelector('[data-act="recenter"]')?.addEventListener("click", () => {
-    recenterTilt();
+    resetGyroCalibration();
     togglePause();
   });
   panel.querySelector('[data-act="replay"]')?.addEventListener("click", enterReplay);

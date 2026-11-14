@@ -57,6 +57,14 @@ function lap(track, options) {
 for (const def of Tracks) {
   const track = buildTrack(def);
 
+  test(`${def.name}: three nitro canisters are placed inside the road edges`, () => {
+    assert.equal(track.nitroPickups.length, 3);
+    for (const pickup of track.nitroPickups) {
+      const sample = track.samples[pickup.idx];
+      assert.ok(Math.hypot(pickup.x - sample.x, pickup.y - sample.y) < track.halfWidth);
+    }
+  });
+
   test(`${def.name}: a kart accelerates at the expected rate from the grid`, () => {
     const kart = newKart(track);
     for (let i = 0; i < 48; i += 1) {
@@ -196,6 +204,51 @@ test("releasing a clean drift reports the nitro it actually refilled", () => {
   assert.ok(Math.abs(kart.driftNitroReward - 0.32) < 0.0001, `gain ${kart.driftNitroReward}`);
   assert.equal(kart.boostSource, "drift");
   assert.ok(kart.boostTimer > 0.5, `no drift burst: ${kart.boostTimer}`);
+});
+
+test("collecting a nitro canister refills up to 35 percent and starts a respawn cooldown", () => {
+  const pickup = track.nitroPickups[0];
+  const kart = newKart(track);
+  kart.a = Math.atan2(pickup.ty, pickup.tx);
+  kart.x = pickup.x - pickup.tx * 9;
+  kart.y = pickup.y - pickup.ty * 9;
+  kart.vx = pickup.tx * 320;
+  kart.vy = pickup.ty * 320;
+  kart.speed = 320;
+  kart.lastIdx = pickup.idx;
+  kart.dist = track.halfWidth * 0.28;
+  kart.nitro = 0.2;
+
+  stepKart(kart, straight, FixedStep, track, true);
+  assert.equal(kart.nitroPickupHit, 1);
+  assert.ok(Math.abs(kart.nitroPickupReward - 0.35) < 0.0001, `gain ${kart.nitroPickupReward}`);
+  assert.ok(Math.abs(kart.nitro - 0.55) < 0.002, `tank ${kart.nitro}`);
+  assert.equal(kart.nitroPickupCooldowns[0], Physics.nitroPickupRespawn);
+
+  kart.nitroPickupHit = 0;
+  kart.x = pickup.x;
+  kart.y = pickup.y;
+  kart.lastIdx = pickup.idx;
+  const afterFirstPickup = kart.nitro;
+  stepKart(kart, straight, FixedStep, track, true);
+  assert.equal(kart.nitroPickupHit, 0, "the same canister must not be collected during its cooldown");
+  assert.ok(kart.nitro - afterFirstPickup < 0.002, "only passive refill should happen before respawn");
+});
+
+test("nitro canisters never overfill the tank", () => {
+  const pickup = track.nitroPickups[0];
+  const kart = newKart(track);
+  kart.a = Math.atan2(pickup.ty, pickup.tx);
+  kart.x = pickup.x - pickup.tx * 9;
+  kart.y = pickup.y - pickup.ty * 9;
+  kart.vx = pickup.tx * 320;
+  kart.vy = pickup.ty * 320;
+  kart.lastIdx = pickup.idx;
+  kart.dist = track.halfWidth * 0.28;
+  kart.nitro = 0.9;
+  stepKart(kart, straight, FixedStep, track, true);
+  assert.equal(kart.nitro, 1);
+  assert.ok(kart.nitroPickupReward <= 0.1 + 0.001);
 });
 
 test("a boost pad fires once, then waits for its cooldown", () => {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { tiltFromGravity } from "../src/input.js";
+import { tiltFromGravity, tiltSteerTarget } from "../src/input.js";
 
 const near = (actual, expected, message) =>
   assert.ok(Math.abs(actual - expected) < 0.5, `${message}: got ${actual}, expected ${expected}`);
@@ -39,4 +39,24 @@ test("the result never goes beyond +-90 degrees", () => {
       }
     }
   }
+});
+
+
+test("a calibrated neutral angle always maps to zero steering", () => {
+  near(tiltSteerTarget(24, 24), 0, "neutral centre");
+  near(tiltSteerTarget(-18, -18), 0, "negative neutral centre");
+});
+
+test("the gyro dead zone filters tiny drift around the calibrated centre", () => {
+  near(tiltSteerTarget(25, 24), 0, "one degree of sensor noise");
+  assert.ok(tiltSteerTarget(30, 24) > 0, "a deliberate right tilt should steer right");
+});
+
+test("gyro direction can be flipped and remains clamped", () => {
+  const normal = tiltSteerTarget(14, 0, 24, false);
+  const flipped = tiltSteerTarget(14, 0, 24, true);
+  assert.ok(normal > 0);
+  near(flipped, -normal, "flipped direction");
+  assert.equal(tiltSteerTarget(100, 0, 24), 1);
+  assert.equal(tiltSteerTarget(-100, 0, 24), -1);
 });

@@ -349,3 +349,25 @@ html.short .hud-box.right .nitro-status {
   .nitro-touch strong { font-size: 13px; }
   .nitro-touch small { font-size: 10px; }
 }
+
+
+/* One-tap gyro calibration controls in the mobile settings and pause menu. */
+.gyro-calibrate-action {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  border: 1px solid rgba(113, 203, 239, .28);
+  border-radius: 9px;
+  background: linear-gradient(135deg, rgba(38, 100, 135, .28), rgba(10, 24, 39, .72));
+  color: #bdeeff;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: .08em;
+  cursor: pointer;
+}
+.gyro-calibrate-action:active {
+  background: rgba(41, 125, 164, .42);
+}
