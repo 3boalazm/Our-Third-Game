@@ -103,6 +103,8 @@ export function createRenderer(canvas) {
 
   // one offscreen canvas per track, holding the grass texture and the scenery
   let layer = null;
+  let minimapLayer = null;
+  let worldViewHalf = 0;
 
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
@@ -166,7 +168,8 @@ export function createRenderer(canvas) {
     }
     drawScenery(lc, scenery);
     drawStaticTrack(lc, track);
-    layer = { id: track.def.id, canvas: off, x: b.minX - margin, y: b.minY - margin, w: worldW, h: worldH };
+    layer = { id: track.def.id, canvas: off, x: b.minX - margin, y: b.minY - margin, w: worldW, h: worldH, scale };
+    minimapLayer = null;
     return layer;
   }
 
@@ -401,6 +404,9 @@ export function createRenderer(canvas) {
       for (let i = 0; i < markCount; i += 1) {
         const m = marks[i];
         if (m.kind !== kind) continue;
+        const midX = (m.x1 + m.x2) * 0.5;
+        const midY = (m.y1 + m.y2) * 0.5;
+        if (Math.abs(midX - cam.x) > worldViewHalf || Math.abs(midY - cam.y) > worldViewHalf) continue;
         ctx.moveTo(m.x1, m.y1);
         ctx.lineTo(m.x2, m.y2);
       }
@@ -409,36 +415,75 @@ export function createRenderer(canvas) {
     ctx.restore();
   }
 
+  function ensureMinimapLayer(track) {
+    if (minimapLayer?.id === track.def.id) return minimapLayer;
+
+    const boxW = 150;
+    const boxH = boxW * 0.72;
+    const pad = 10;
+    const b = track.bounds;
+    const mapScale = Math.min(
+      (boxW - 16) / (b.maxX - b.minX + track.def.width),
+      (boxH - 16) / (b.maxY - b.minY + track.def.width),
+    );
+    const ox = (boxW - (b.maxX - b.minX) * mapScale) / 2 - b.minX * mapScale;
+    const oy = pad + (boxH - (b.maxY - b.minY) * mapScale) / 2 - b.minY * mapScale;
+    const off = document.createElement("canvas");
+    off.width = boxW * 2;
+    off.height = boxH * 2;
+    const mapCtx = off.getContext("2d");
+    mapCtx.scale(2, 2);
+
+    mapCtx.fillStyle = "rgba(10, 14, 26, 0.55)";
+    mapCtx.beginPath();
+    mapCtx.roundRect(0, 0, boxW, boxH, 12);
+    mapCtx.fill();
+    mapCtx.save();
+    mapCtx.translate(ox, oy);
+    mapCtx.scale(mapScale, mapScale);
+    mapCtx.lineJoin = "round";
+    mapCtx.strokeStyle = "rgba(255, 255, 255, 0.75)";
+    mapCtx.lineWidth = 7 / mapScale;
+    mapCtx.stroke(track.path);
+
+    mapCtx.fillStyle = "rgba(120, 215, 255, 0.9)";
+    for (const p of track.pads ?? []) {
+      mapCtx.beginPath();
+      mapCtx.arc(p.x, p.y, 2.6 / mapScale, 0, Math.PI * 2);
+      mapCtx.fill();
+    }
+
+    const start = track.samples[0];
+    mapCtx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    mapCtx.lineWidth = 2 / mapScale;
+    mapCtx.beginPath();
+    mapCtx.moveTo(start.x - start.ty * track.halfWidth, start.y + start.tx * track.halfWidth);
+    mapCtx.lineTo(start.x + start.ty * track.halfWidth, start.y - start.tx * track.halfWidth);
+    mapCtx.stroke();
+    mapCtx.restore();
+
+    minimapLayer = { id: track.def.id, canvas: off, scale: mapScale, ox, oy, boxW, boxH };
+    return minimapLayer;
+  }
+
   function drawMinimap(track, karts, me, ghost) {
     const boxW = Math.min(150, width * 0.32);
     const boxH = boxW * 0.72;
     const pad = 10;
-    const b = track.bounds;
-    const k = Math.min(
-      (boxW - 16) / (b.maxX - b.minX + track.def.width),
-      (boxH - 16) / (b.maxY - b.minY + track.def.width),
-    );
-    const ox = width - boxW - pad + (boxW - (b.maxX - b.minX) * k) / 2 - b.minX * k;
-    const oy = pad + (boxH - (b.maxY - b.minY) * k) / 2 - b.minY * k;
+    const left = width - boxW - pad;
+    const mini = ensureMinimapLayer(track);
+    const ratio = boxW / mini.boxW;
+    const k = mini.scale * ratio;
+    const ox = left + mini.ox * ratio;
+    const oy = pad + mini.oy * ratio;
+
+    // Static route geometry is rasterized once per track, not stroked every frame.
+    ctx.drawImage(mini.canvas, left, pad, boxW, boxH);
     ctx.save();
-    ctx.fillStyle = "rgba(10, 14, 26, 0.55)";
-    ctx.beginPath();
-    ctx.roundRect(width - boxW - pad, pad, boxW, boxH, 12);
-    ctx.fill();
     ctx.translate(ox, oy);
     ctx.scale(k, k);
-    ctx.lineJoin = "round";
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.75)";
-    ctx.lineWidth = 7 / k;
-    ctx.stroke(track.path);
-    // boost pads
-    ctx.fillStyle = "rgba(120, 215, 255, 0.9)";
-    for (const p of track.pads ?? []) {
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 2.6 / k, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // collectible nitro canisters
+
+    // Fuel pickup visibility changes as the player collects and respawns canisters.
     ctx.fillStyle = "#8ceeff";
     ctx.strokeStyle = "rgba(7, 36, 54, .9)";
     ctx.lineWidth = 1.5 / k;
@@ -450,14 +495,7 @@ export function createRenderer(canvas) {
       ctx.fill();
       ctx.stroke();
     }
-    // start line
-    const s = track.samples[0];
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-    ctx.lineWidth = 2 / k;
-    ctx.beginPath();
-    ctx.moveTo(s.x - s.ty * track.halfWidth, s.y + s.tx * track.halfWidth);
-    ctx.lineTo(s.x + s.ty * track.halfWidth, s.y - s.tx * track.halfWidth);
-    ctx.stroke();
+
     for (const kart of karts) {
       ctx.fillStyle = kart.color;
       ctx.beginPath();
@@ -478,7 +516,6 @@ export function createRenderer(canvas) {
     }
     ctx.restore();
   }
-
   // The saved best lap: a pale copy of the kart, drawn under the real karts.
   function drawGhost(ghost) {
     ctx.save();
@@ -613,6 +650,9 @@ export function createRenderer(canvas) {
       fit = Math.min(fit, (0.74 * height) / AheadWorld);
     }
     const scale = fit * cam.zoom;
+    // Half the viewport diagonal bounds every visible world point, even with
+    // the chase camera rotated. Sample only that section of the baked track.
+    worldViewHalf = Math.hypot(width, height) / (2 * scale) + 96;
     const anchorY = chase ? (photo ? height / 2 : height * (rear ? 0.77 : 0.70)) : height / 2;
 
     shakeAmount *= Math.exp(-9 * dt);
@@ -634,7 +674,7 @@ export function createRenderer(canvas) {
 
     // faint grid (under the road and the scenery) so you can feel the speed on the grass (a square that covers any rotation)
     const grid = 180;
-    const reach = Math.hypot(width, height) / scale + grid;
+    const reach = worldViewHalf + grid;
     ctx.strokeStyle = GrassLine;
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -650,7 +690,22 @@ export function createRenderer(canvas) {
 
     // static grass texture and scenery, baked once per track
     const world = ensureLayer(track);
-    ctx.drawImage(world.canvas, world.x, world.y, world.w, world.h);
+    const sourceLeft = Math.max(0, Math.floor((cam.x - worldViewHalf - world.x) * world.scale));
+    const sourceTop = Math.max(0, Math.floor((cam.y - worldViewHalf - world.y) * world.scale));
+    const sourceRight = Math.min(world.canvas.width, Math.ceil((cam.x + worldViewHalf - world.x) * world.scale));
+    const sourceBottom = Math.min(world.canvas.height, Math.ceil((cam.y + worldViewHalf - world.y) * world.scale));
+    const sourceWidth = sourceRight - sourceLeft;
+    const sourceHeight = sourceBottom - sourceTop;
+    if (sourceWidth > 0 && sourceHeight > 0) {
+      ctx.drawImage(
+        world.canvas,
+        sourceLeft, sourceTop, sourceWidth, sourceHeight,
+        world.x + sourceLeft / world.scale,
+        world.y + sourceTop / world.scale,
+        sourceWidth / world.scale,
+        sourceHeight / world.scale,
+      );
+    }
     drawPads(track);
     drawNitroPickups(track, me);
     rememberMarks(karts);
