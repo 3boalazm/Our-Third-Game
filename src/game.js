@@ -1,4 +1,5 @@
 import { nearest } from "./track.js";
+import { vehicleById, tuneById } from "./garage.js";
 
 // Arcade physics: tuned by feel, in pixels and seconds. The simulation always
 // advances in FixedStep slices so it behaves the same at any frame rate.
@@ -74,11 +75,21 @@ export function makeKart({
   isMe = false,
   isRemote = false,
   livery = "stripe",
+  vehicle = "apex",
+  tune = "balanced",
 }) {
+  const chassis = vehicleById(vehicle);
+  const setup = tuneById(tune);
   return {
     id,
     name,
     color,
+    vehicle: chassis.id,
+    tune: setup.id,
+    speedFactor: chassis.speed * setup.speed,
+    accelFactor: chassis.accel * setup.accel,
+    handlingFactor: chassis.handling * setup.handling,
+    nitroFactor: setup.nitro,
     livery: LiveryOptions.includes(livery) ? livery : "stripe",
     bot,
     skill,
@@ -228,7 +239,7 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
   // --- nitro tank ---
   if (canDrive && input.nitro && kart.nitro > (kart.nitroOn ? 0 : P.nitroStartMin)) {
     kart.nitroOn = true;
-    kart.nitro = Math.max(0, kart.nitro - P.nitroDrain * dt);
+    kart.nitro = Math.max(0, kart.nitro - (P.nitroDrain / (kart.nitroFactor ?? 1)) * dt);
     if (kart.nitro === 0) kart.nitroOn = false;
   } else {
     kart.nitroOn = false;
@@ -246,6 +257,7 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
   const rubber = kart.bot ? (kart.rubber ?? 1) : 1;
   const top =
     P.maxSpeed *
+    (kart.speedFactor ?? 1) *
     kart.skill *
     (onRoad ? 1 : P.offRoadFactor) *
     power *
@@ -255,7 +267,7 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
   // --- throttle / brake ---
   if (canDrive && (input.gas || kart.nitroOn) && !input.brake) {
     if (along < top) {
-      along = Math.min(top, along + P.accel * thrust * (kart.accelScale ?? 1) * dt);
+      along = Math.min(top, along + P.accel * (kart.accelFactor ?? 1) * thrust * (kart.accelScale ?? 1) * dt);
     }
   } else if (canDrive && input.brake) {
     along = Math.max(-P.reverseMax, along - P.brake * dt);
@@ -289,13 +301,13 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
     kart.driftTime = 0;
   }
   kart.drifting = drifting;
-  side *= Math.exp(-(drifting ? P.driftGrip : P.grip) * (kart.grip ?? 1) * dt);
+  side *= Math.exp(-(drifting ? P.driftGrip : P.grip) * (kart.grip ?? 1) * (kart.handlingFactor ?? 1) * dt);
 
   // --- steering ---
   const control = clamp(Math.abs(along) / 170, 0, 1);
   const slowDown = 1 - 0.3 * clamp(Math.abs(along) / P.maxSpeed, 0, 1);
   kart.a +=
-    steer * P.turnRate * (drifting ? P.driftTurn : 1) * control * slowDown *
+    steer * P.turnRate * (kart.handlingFactor ?? 1) * (drifting ? P.driftTurn : 1) * control * slowDown *
     (kart.steerScale ?? 1) * (along >= 0 ? 1 : -1) * dt;
 
   // Rebuild the velocity with the heading from *before* this step's steering.
