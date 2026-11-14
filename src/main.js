@@ -958,6 +958,7 @@ function handleKartEvents(kart) {
   if (kart.nitroPickupHit) {
     if (mine) {
       const gain = Math.round((kart.nitroPickupReward ?? 0) * 100);
+      const fx = renderer.particles;
       for (let i = 0; i < 18; i += 1) {
         fx.emit(
           "spark",
@@ -2591,7 +2592,18 @@ function updateAudio() {
   });
 }
 
+// One bad frame (a bug in an effect, say) must never stop the game loop:
+// log it and carry on instead of freezing the picture.
 function frame(now) {
+  try {
+    frameInner(now);
+  } catch (err) {
+    console.error("frame error", err);
+    requestAnimationFrame(frame);
+  }
+}
+
+function frameInner(now) {
   const frameDt = Math.min(0.1, (now - last) / 1000);
   last = now;
   let updateMs = 0;
@@ -2683,6 +2695,14 @@ if (import.meta.env.DEV) {
     },
     get remote() {
       return remote;
+    },
+    // start a race on a given track ("race" against bots, or "trial")
+    start(trackId, mode = "race") {
+      const before = prefs.track;
+      prefs.track = trackId;
+      if (mode === "trial") startTimeTrial();
+      else startSolo();
+      prefs.track = before;
     },
     // advance the simulation without waiting for animation frames
     step(dt = FixedStep, now = performance.now()) {
