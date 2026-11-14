@@ -237,6 +237,7 @@ root.innerHTML = `
     </div>
   </div>
   <div id="screen"></div>
+  <div id="perf-debug" hidden></div>
 `;
 const $ = (id) => document.getElementById(id);
 const canvas = $("game");
@@ -270,6 +271,22 @@ const toastEl = $("toast");
 const tipEl = $("tip");
 const touchEl = $("touch");
 const screen = $("screen");
+const perfEl = $("perf-debug");
+const perfDebug = params.get("perf") === "1";
+perfEl.hidden = !perfDebug;
+Object.assign(perfEl.style, {
+  position: "fixed",
+  left: "8px",
+  top: "8px",
+  zIndex: "10000",
+  padding: "6px 8px",
+  borderRadius: "7px",
+  background: "rgba(0,0,0,.82)",
+  color: "#fff",
+  font: "11px/1.4 ui-monospace, monospace",
+  whiteSpace: "pre",
+  pointerEvents: "none",
+});
 const pauseButton = $("pause-btn");
 const muteButton = $("mute-btn");
 const tiltGauge = $("tilt-gauge");
@@ -2557,6 +2574,7 @@ let accumulator = 0;
 let frameAverage = 1 / 60;
 let slowFrames = 0;
 let lowQuality = false;
+let lastPerfPaint = 0;
 
 function updateAudio() {
   if (!world || !me || paused || world.state === "demo") {
@@ -2576,6 +2594,7 @@ function updateAudio() {
 function frame(now) {
   const frameDt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  let updateMs = 0;
 
   pollPadRemap();
 
@@ -2593,7 +2612,9 @@ function frame(now) {
     accumulator += frameDt;
     let steps = 0;
     while (accumulator >= FixedStep && steps < 6) {
+      const updateStart = performance.now();
       update(FixedStep, now);
+      updateMs += performance.now() - updateStart;
       accumulator -= FixedStep;
       steps += 1;
     }
@@ -2603,7 +2624,9 @@ function frame(now) {
   }
   updateHud();
   updateAudio();
+  let drawMs = 0;
   if (world) {
+    const drawStart = performance.now();
     renderer.draw(
       {
         track: world.track,
@@ -2616,6 +2639,20 @@ function frame(now) {
       },
       paused && !photo ? 0 : frameDt,
     );
+    drawMs = performance.now() - drawStart;
+  }
+
+  // Opt-in browser diagnostics: open the game with ?perf=1 to separate
+  // simulation cost from canvas rendering cost on the affected device.
+  if (perfDebug && now - lastPerfPaint >= 200) {
+    lastPerfPaint = now;
+    const heap = performance.memory?.usedJSHeapSize;
+    perfEl.textContent =
+      `FPS ${Math.round(1 / Math.max(frameAverage, 0.001))}  FRAME ${(frameDt * 1000).toFixed(1)}ms\\n` +
+      `UPDATE ${updateMs.toFixed(1)}ms  DRAW ${drawMs.toFixed(1)}ms\\n` +
+      `KARTS ${world?.karts?.length ?? 0}  PARTICLES ${renderer.particles.activeCount()}` +
+      (heap ? `  HEAP ${Math.round(heap / 1048576)}MB` : "");
+    perfEl.hidden = false;
   }
 
   // Slow device? Draw at a lower resolution instead of stuttering.
