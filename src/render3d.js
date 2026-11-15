@@ -949,7 +949,7 @@ export function createRenderer3D(canvas) {
   }
 
 
-  // ---------------- items: boxes, rockets, oil and shields
+  // ---------------- items: boxes, rockets, snowballs, oil and shields
   const boxTex = canvasTexture(128, 128, (c, w, h) => {
     const g = c.createLinearGradient(0, 0, w, h);
     g.addColorStop(0, "#ff5ac8");
@@ -975,9 +975,12 @@ export function createRenderer3D(canvas) {
   const boxGeo = new THREE.BoxGeometry(30, 30, 30);
   const boxMeshes = [];
   const rocketMeshes = [];
+  const snowMeshes = [];
   const oilMeshes = [];
   const rocketBody = new THREE.MeshLambertMaterial({ color: 0xe8423f });
   const rocketFin = new THREE.MeshLambertMaterial({ color: 0xf2f4f8 });
+  const snowMat = new THREE.MeshLambertMaterial({ color: 0xf4fcff, emissive: 0x2a4a63 });
+  const snowGeo = new THREE.SphereGeometry(9, 12, 10);
   const oilMat = new THREE.MeshPhongMaterial({ color: 0x15121f, shininess: 90, specular: 0x8a7cff, transparent: true, opacity: 0.92, depthWrite: false });
   const oilGeo = new THREE.CircleGeometry(40, 20);
   oilGeo.rotateX(-Math.PI / 2);
@@ -1038,6 +1041,20 @@ export function createRenderer3D(canvas) {
       m.position.set(r.x, 22, r.y);
       m.rotation.set(0, -r.a, 0);
       m.userData.flame.scale.set(1, 0.8 + Math.random() * 0.5, 1);
+    });
+    const snowballs = items?.snowballs ?? [];
+    while (snowMeshes.length < snowballs.length) {
+      const m = new THREE.Mesh(snowGeo, snowMat);
+      m.castShadow = true;
+      scene.add(m);
+      snowMeshes.push(m);
+    }
+    snowMeshes.forEach((m, i) => {
+      const s = snowballs[i];
+      m.visible = !!s;
+      if (!s) return;
+      m.position.set(s.x, 20, s.y);
+      m.rotation.set(0, -s.a, 0);
     });
     const oils = items?.oils ?? [];
     while (oilMeshes.length < oils.length) {

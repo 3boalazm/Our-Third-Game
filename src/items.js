@@ -4,18 +4,22 @@
 //   shield  8 seconds of protection that blocks one hit
 //   rocket  flies along the road and homes in on the kart just ahead
 //   oil     a slick dropped behind you; whoever drives into it spins out
+//   snow    a snowball thrown at the kart in front: it covers them in slush
+//           and slows them right down for a moment (no spin)
 //
 // A box gives an item after a short "roulette". Karts at the back are more
-// likely to get rockets and boosts, the leader shields and oil. Bots use their
-// items on their own. Pure logic (no drawing), tested in tests/items.test.mjs.
+// likely to get rockets, snowballs and boosts, the leader shields and oil, so
+// the box is not just the oil slick over and over. Bots use their items on
+// their own. Pure logic (no drawing), tested in tests/items.test.mjs.
 // Kart fields used: item, itemRoll, itemPending, itemHeld, shieldTimer, spinTimer.
 
-export const ItemKinds = ["boost", "shield", "rocket", "oil"];
+export const ItemKinds = ["boost", "shield", "rocket", "oil", "snow"];
 export const ItemInfo = {
   boost: { name: "Boost", icon: "⚡" },
   shield: { name: "Shield", icon: "🛡" },
   rocket: { name: "Rocket", icon: "🚀" },
   oil: { name: "Oil slick", icon: "🛢" },
+  snow: { name: "Snowball", icon: "❄" },
 };
 
 const RowFractions = [0.07, 0.38, 0.69]; // away from the boost pads and nitro canisters
@@ -26,6 +30,9 @@ export const ShieldTime = 8;
 export const SpinTime = 1.0;
 const RocketSpeed = 980; // px / s
 const RocketLife = 5;
+const SnowSpeed = 820; // px / s
+const SnowLife = 4;
+export const SnowSlow = 1.6; // seconds of slush after a snowball hit
 const OilLife = 25;
 const OilRadius = 40;
 const Spacing = 14; // track sample spacing (see track.js)
@@ -59,16 +66,22 @@ export function buildItemBoxes(track) {
 // Weights for each item by race position: 0 = leading, 1 = last.
 export function itemWeights(fraction) {
   const f = Math.max(0, Math.min(1, fraction));
-  const lead = { shield: 0.4, oil: 0.45, boost: 0.15, rocket: 0 };
-  const last = { shield: 0.1, oil: 0.05, boost: 0.4, rocket: 0.45 };
+  const lead = { shield: 0.34, oil: 0.34, boost: 0.18, rocket: 0, snow: 0.14 };
+  const last = { shield: 0.08, oil: 0.06, boost: 0.34, rocket: 0.3, snow: 0.22 };
   const out = {};
   for (const k of ItemKinds) out[k] = lead[k] + (last[k] - lead[k]) * f;
   return out;
 }
 
-export function rollItem(fraction, rng = Math.random) {
+// `avoid` is the item the kart got last time: it is taken out of the hat, so a
+// box rarely hands out the same thing twice in a row (the oil slick again and
+// again was the complaint).
+export function rollItem(fraction, rng = Math.random, avoid = null) {
   const w = itemWeights(fraction);
-  let r = rng() * ItemKinds.reduce((sum, k) => sum + w[k], 0);
+  if (avoid && w[avoid] !== undefined) w[avoid] = 0;
+  const total = ItemKinds.reduce((sum, k) => sum + w[k], 0);
+  if (total <= 0) return "boost";
+  let r = rng() * total;
   for (const k of ItemKinds) {
     r -= w[k];
     if (r <= 0) return k;
@@ -93,6 +106,7 @@ function lateral(track, kart) {
 export function createItems(track, { rng = Math.random } = {}) {
   const boxes = buildItemBoxes(track);
   const rockets = [];
+  const snowballs = [];
   const oils = [];
   const events = [];
 
@@ -102,7 +116,8 @@ export function createItems(track, { rng = Math.random } = {}) {
       events.push({ type: "blocked", kart, by, kind });
       return false;
     }
-    kart.spinTimer = SpinTime;
+    if (kind === "snow") kart.slowTimer = SnowSlow;
+    else kart.spinTimer = SpinTime;
     events.push({ type: "hit", kart, by, kind });
     return true;
   }
@@ -124,6 +139,17 @@ export function createItems(track, { rng = Math.random } = {}) {
         y: kart.y - Math.sin(kart.a) * 58,
         born: time,
         owner: kart,
+      });
+    } else if (kind === "snow") {
+      const rank = order.indexOf(kart);
+      const target = rank > 0 ? order[rank - 1] : null;
+      snowballs.push({
+        x: kart.x + Math.cos(kart.a) * 30,
+        y: kart.y + Math.sin(kart.a) * 30,
+        a: kart.a,
+        target,
+        owner: kart,
+        life: SnowLife,
       });
     } else if (kind === "rocket") {
       const rank = order.indexOf(kart);
@@ -152,6 +178,7 @@ export function createItems(track, { rng = Math.random } = {}) {
     let go = false;
     if (kind === "shield" || kind === "boost") go = true;
     else if (kind === "rocket") go = rank > 0 || kart.itemHeld > 6;
+    else if (kind === "snow") go = rank > 0 || kart.itemHeld > 6;
     else if (kind === "oil") {
       const behind = order[rank + 1];
       go = !behind || Math.hypot(behind.x - kart.x, behind.y - kart.y) < 650 || kart.itemHeld > 7;
@@ -167,6 +194,7 @@ export function createItems(track, { rng = Math.random } = {}) {
         kart.itemRoll = Math.max(0, kart.itemRoll - dt);
         if (kart.itemRoll === 0 && kart.itemPending) {
           kart.item = kart.itemPending;
+          kart.lastItem = kart.item;
           kart.itemPending = null;
           kart.itemHeld = 0;
           kart.itemDelay = 0.8 + rng() * 2.5;
@@ -184,7 +212,7 @@ export function createItems(track, { rng = Math.random } = {}) {
         if (!kart.item && !(kart.itemRoll > 0)) {
           const rank = order.indexOf(kart);
           const fraction = order.length > 1 ? rank / (order.length - 1) : 0;
-          kart.itemPending = rollItem(fraction, rng);
+          kart.itemPending = rollItem(fraction, rng, kart.lastItem ?? null);
           kart.itemRoll = RollTime;
           events.push({ type: "box", kart });
         }
@@ -233,6 +261,36 @@ export function createItems(track, { rng = Math.random } = {}) {
         rockets.splice(i, 1);
       }
     }
+    // snowballs: they fly straight at the kart in front and slow it down
+    for (let i = snowballs.length - 1; i >= 0; i -= 1) {
+      const s = snowballs[i];
+      s.life -= dt;
+      const t = s.target;
+      if (t && !t.finished) {
+        const dx = t.x - s.x;
+        const dy = t.y - s.y;
+        const d = Math.hypot(dx, dy) || 1;
+        s.a = Math.atan2(dy, dx);
+        const step = Math.min(d, SnowSpeed * dt);
+        s.x += (dx / d) * step;
+        s.y += (dy / d) * step;
+      } else {
+        s.x += Math.cos(s.a) * SnowSpeed * dt;
+        s.y += Math.sin(s.a) * SnowSpeed * dt;
+      }
+      let done = s.life <= 0;
+      for (const kart of karts) {
+        if (done || kart === s.owner || kart.finished) continue;
+        if (Math.hypot(kart.x - s.x, kart.y - s.y) < 42) {
+          hit(kart, s.owner, "snow");
+          done = true;
+        }
+      }
+      if (done) {
+        events.push({ type: "splash", kind: "snow", x: s.x, y: s.y });
+        snowballs.splice(i, 1);
+      }
+    }
     // oil slicks
     for (let i = oils.length - 1; i >= 0; i -= 1) {
       const o = oils[i];
@@ -249,5 +307,5 @@ export function createItems(track, { rng = Math.random } = {}) {
     }
   }
 
-  return { boxes, rockets, oils, events, update, use };
+  return { boxes, rockets, snowballs, oils, events, update, use };
 }

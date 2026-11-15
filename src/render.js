@@ -717,7 +717,7 @@ export function createRenderer(canvas, canvas3d = null) {
     if (!photo) drawMinimap(track, karts, me, ghost);
   }
 
-  // Item boxes, rockets, oil and shields in the top-down views.
+  // Item boxes, rockets, snowballs, oil and shields in the top-down views.
   function drawItems2d(items, itemTime, karts) {
     if (!items) return;
     for (const b of items.boxes) {
@@ -758,6 +758,25 @@ export function createRenderer(canvas, canvas3d = null) {
       ctx.lineTo(-30 - Math.random() * 8, 0);
       ctx.lineTo(-15, 4);
       ctx.fill();
+      ctx.restore();
+    }
+    for (const s of items.snowballs ?? []) {
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(s.a);
+      ctx.fillStyle = "rgba(226, 246, 255, 0.5)";
+      ctx.beginPath();
+      ctx.moveTo(-8, -5);
+      ctx.lineTo(-30, 0);
+      ctx.lineTo(-8, 5);
+      ctx.fill();
+      ctx.fillStyle = "#eefaff";
+      ctx.strokeStyle = "#8fd0ff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
       ctx.restore();
     }
     for (const k of karts) {

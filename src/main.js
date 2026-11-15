@@ -15,6 +15,7 @@ import {
   resolveContacts,
   rubberBand,
   stepKart,
+  applyDrivingTuning,
 } from "./game.js";
 import { loadGhost, recordGhostFrame, sampleGhost, saveGhost } from "./ghost.js";
 import { WeatherOptions, applyWeather } from "./weather.js";
@@ -101,6 +102,12 @@ const SensMin = 1;
 const SensMax = 10;
 const SensDefault = 6;
 const tiltRangeFor = (sens) => 44 - 3.4 * sens;
+// The pedals have their own sliders: 1 is soft, 10 is sharp (5 is the default).
+const PedalDefault = 5;
+const readPedal = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= SensMin && n <= SensMax ? Math.round(n) : PedalDefault;
+};
 const CountdownSeconds = 3.2;
 const SendEverySeconds = 0.05;
 
@@ -145,6 +152,8 @@ function readPrefs() {
     // phone controls
     steer: saved.steer === "buttons" ? "buttons" : "tilt",
     tiltSens: readSens(saved),
+    brakeSens: readPedal(saved.brakeSens),
+    handbrakeSens: readPedal(saved.handbrakeSens),
     screenMode: saved.screenMode === "landscape" ? "landscape" : "auto",
     fullscreen: saved.fullscreen !== false,
     // everybody starts once on the new 3D view (cam3d marks prefs saved after it arrived)
@@ -195,6 +204,12 @@ function medalChip(tier) {
   span.textContent = tier[0].toUpperCase();
   span.title = `${tier[0].toUpperCase()}${tier.slice(1)} medal pace`;
   return span;
+}
+
+// The brake and handbrake sensitivity follows the player's kart live, so the
+// sliders can be tried in the Pause menu in the middle of a race.
+function applyDrivingPrefs(kart = me) {
+  if (kart && kart.isMe) applyDrivingTuning(kart, prefs);
 }
 
 function savePrefs() {
@@ -628,6 +643,7 @@ function startRace({ trackId, laps, kartsSpec, mode = "race", weather = prefs.we
   const savedGhost = mode === "trial" ? loadGhost(t.def.id) : null;
   const weatherDef = applyWeather(karts, weather);
   if (me) applyUpgrades(me, prefs.upgrades);
+  applyDrivingPrefs(me);
   world = {
     state: "countdown",
     mode,
@@ -926,6 +942,10 @@ function emitEffects(kart) {
   const rearX = kart.x - cos * rear;
   const rearY = kart.y - sin * rear;
 
+  if ((kart.slowTimer ?? 0) > 0 && kart.speed > 90 && tick % 3 === 0) {
+    // frost falling off a kart that has just been hit by a snowball
+    fx.emit("spark", rearX, rearY, rand(90) - cos * 30, rand(90) - sin * 30, 0.4, 3, "#dff4ff");
+  }
   if ((kart.drifting || kart.handbraking) && kart.speed > 180) {
     for (const side of [-1, 1]) {
       fx.emit(
@@ -1578,6 +1598,12 @@ function showMenu() {
           <div class="page-heading"><div><span class="eyebrow">MAKE YOURSELF COMFORTABLE</span><h1>SETTINGS</h1><p>Fine-tune the way you play.</p></div><span class="page-index">05 <i>/</i> 05</span></div>
           <div class="settings-layout">
             <section class="menu-panel"><div class="panel-heading"><span>CONTROLLER SETUP</span><span>GAMEPAD</span></div><p class="settings-intro">Connect a controller, then select an action and press the button you want to assign.</p><div data-slot="pad"></div></section>
+            <section class="menu-panel pedal-setup"><div class="panel-heading"><span>BRAKES &amp; DRIFT</span><span>SENSITIVITY</span></div>
+              <p class="settings-intro">A soft brake keeps the kart rolling into a corner, so brake + handbrake makes a proper slide instead of a stop. A sharper handbrake swings the tail further. Both can also be changed from the Pause menu.</p>
+              <div class="setup-field"><span class="field-label">BRAKE STRENGTH</span><div data-slot="brakeSens"></div></div>
+              <div class="setup-field"><span class="field-label">HANDBRAKE</span><div data-slot="handbrakeSens"></div></div>
+              <div class="pedal-readout" data-role="pedal-readout"></div>
+            </section>
             ${isTouchDevice ? `<section class="menu-panel mobile-settings"><div class="panel-heading"><span>TOUCH & MOTION</span><span>MOBILE</span></div>
               <div class="setup-field"><span class="field-label">STEERING</span><div data-slot="steer"></div></div>
               <div class="setup-field" data-tilt-only><span class="field-label">TILT SENSITIVITY</span><div data-slot="sens"></div></div>
@@ -2025,8 +2051,55 @@ function showMenu() {
     padSlot.replaceChildren(wrap);
   };
 
+  // Brake and handbrake strength: one slider each, applied to the kart the
+  // moment they move, so the settings (and the Pause menu) can be felt at once.
+  const pedalWord = (value, low, high) => {
+    const level = value <= 3 ? 0 : value >= 8 ? 2 : 1;
+    return level === 0 ? low : level === 2 ? high : "tuned";
+  };
+  const renderPedals = () => {
+    const brakeSlot = element.querySelector('[data-slot="brakeSens"]');
+    const handbrakeSlot = element.querySelector('[data-slot="handbrakeSens"]');
+    if (!brakeSlot || !handbrakeSlot) return;
+    const readout = element.querySelector('[data-role="pedal-readout"]');
+    const update = () => {
+      if (!readout) return;
+      readout.textContent = `Brake: ${pedalWord(prefs.brakeSens, "soft", "sharp")} · Handbrake: ${pedalWord(prefs.handbrakeSens, "gentle", "big swing")}. Saved with the rest of your settings.`;
+    };
+    brakeSlot.replaceChildren(
+      slider({
+        min: SensMin,
+        max: SensMax,
+        value: prefs.brakeSens,
+        label: "Brake strength",
+        onInput: (value) => {
+          prefs.brakeSens = value;
+          applyDrivingPrefs();
+          update();
+        },
+        onChange: savePrefs,
+      }),
+    );
+    handbrakeSlot.replaceChildren(
+      slider({
+        min: SensMin,
+        max: SensMax,
+        value: prefs.handbrakeSens,
+        label: "Handbrake strength",
+        onInput: (value) => {
+          prefs.handbrakeSens = value;
+          applyDrivingPrefs();
+          update();
+        },
+        onChange: savePrefs,
+      }),
+    );
+    update();
+  };
+
   const renderChoices = () => {
     renderPad();
+    renderPedals();
     element.querySelector('[data-slot="track"]').replaceChildren(
       choice(
         Tracks.map((tr) => ({ value: tr.id, text: tr.name })),
@@ -2596,6 +2669,32 @@ function showPause() {
   const camera = cameraGroup();
   camera.classList.add("pause-setting-group");
   adjustments.append(camera);
+  // Brakes can be tuned without leaving the race: the kart picks it up live.
+  for (const [key, label] of [
+    ["brakeSens", "Brake strength"],
+    ["handbrakeSens", "Handbrake strength"],
+  ]) {
+    const group = document.createElement("div");
+    group.className = "group pause-setting-group";
+    const tag = document.createElement("span");
+    tag.className = "label";
+    tag.textContent = label;
+    group.append(
+      tag,
+      slider({
+        min: SensMin,
+        max: SensMax,
+        value: prefs[key],
+        label,
+        onInput: (value) => {
+          prefs[key] = value;
+          applyDrivingPrefs();
+        },
+        onChange: savePrefs,
+      }),
+    );
+    adjustments.append(group);
+  }
 
   panel.querySelector('[data-act="resume"]').addEventListener("click", () => togglePause());
   panel.querySelector('[data-act="recenter"]')?.addEventListener("click", () => {
@@ -2684,14 +2783,29 @@ function handleItemEvents() {
       }
     } else if (e.type === "hit") {
       const fx = renderer.particles;
-      for (let i = 0; i < 16; i += 1) fx.emit("spark", e.kart.x, e.kart.y, rand(460), rand(460), 0.4, 3, e.kind === "oil" ? "#c9c1ff" : "#ffb35a");
+      const color = e.kind === "oil" ? "#c9c1ff" : e.kind === "snow" ? "#eaf8ff" : "#ffb35a";
+      for (let i = 0; i < 16; i += 1) fx.emit("spark", e.kart.x, e.kart.y, rand(460), rand(460), 0.4, 3, color);
+      const hitName = e.kind === "oil" ? "OIL" : e.kind === "snow" ? "SNOWBALL" : "ROCKET";
       if (mine) {
         audio.crash(0.8);
         vibrate(60);
-        renderer.shake(9);
-        showToast(e.kind === "oil" ? "OIL! YOU SPUN OUT" : "HIT BY A ROCKET!", "bad", 1300);
+        renderer.shake(e.kind === "snow" ? 5 : 9);
+        showToast(
+          e.kind === "oil"
+            ? "OIL! YOU SPUN OUT"
+            : e.kind === "snow"
+              ? "SNOWBALL! YOU ARE SLOWED DOWN"
+              : "HIT BY A ROCKET!",
+          "bad",
+          1300,
+        );
       } else if (e.by === me) {
-        showToast(`${e.kind === "oil" ? "OIL" : "ROCKET"} HIT ${e.kart.name.toUpperCase()}!`, "good", 1200);
+        showToast(`${hitName} HIT ${e.kart.name.toUpperCase()}!`, "good", 1200);
+      }
+    } else if (e.type === "splash") {
+      const fx = renderer.particles;
+      for (let i = 0; i < 14; i += 1) {
+        fx.emit("spark", e.x, e.y, rand(330), rand(330), 0.45, 4, e.kind === "snow" ? "#eaf8ff" : "#ffd36b");
       }
     } else if (e.type === "blocked") {
       if (mine) showToast("SHIELD BLOCKED IT!", "good", 1100);
