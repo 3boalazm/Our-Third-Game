@@ -27,23 +27,27 @@ test("buttons and triggers map to the driving controls", () => {
   assert.equal(gamepadInput(pad({ pressed: [1] })).brake, true);
   assert.equal(gamepadInput(pad({ value: { 6: 0.5 } })).brake, true);
   assert.equal(gamepadInput(pad({ pressed: [2] })).drift, true);
-  assert.equal(gamepadInput(pad({ pressed: [5] })).drift, true);
+  assert.equal(gamepadInput(pad({ pressed: [5] })).handbrake, true);
+  assert.equal(gamepadInput(pad({ pressed: [5] })).drift, false);
   assert.equal(gamepadInput(pad({ pressed: [3] })).nitro, true);
   assert.equal(gamepadInput(pad({ pressed: [9] })).pause, true);
 });
 
-test("the four driving buttons can be remapped", () => {
-  const custom = { gas: 3, brake: 1, drift: 0, nitro: 2 };
+test("the five driving buttons can be remapped", () => {
+  const custom = { gas: 3, brake: 1, drift: 0, nitro: 2, handbrake: 7 };
   const state = gamepadInput(pad({ pressed: [3] }), custom);
   assert.equal(state.gas, true);
   assert.equal(state.nitro, false);
   assert.equal(gamepadInput(pad({ pressed: [0] }), custom).drift, true);
   assert.equal(gamepadInput(pad({ pressed: [2] }), custom).nitro, true);
+  assert.equal(gamepadInput(pad({ pressed: [7] }), custom).handbrake, true);
+  assert.equal(gamepadInput(pad({ pressed: [5] }), custom).handbrake, false);
   assert.deepEqual(normalizePadBindings({ gas: 7, brake: -1, drift: "x" }), {
     gas: 7,
     brake: 1,
     drift: 2,
     nitro: 3,
+    handbrake: 5,
   });
   setPadBindings(custom);
   assert.equal(gamepadInput(pad({ pressed: [3] })).gas, true);

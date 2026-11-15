@@ -367,6 +367,12 @@ html.compact body[data-steer="tilt"] .touch-left .brake {
   height: 76px;
 }
 
+html.compact body[data-steer="tilt"] .touch-left .handbrake {
+  width: 68px;
+  height: 68px;
+  font-size: 11px;
+}
+
 html.compact .touch-right .large {
   width: 88px;
   height: 88px;
@@ -468,12 +474,31 @@ html.compact #tip {
 /* brake: a small pill above the arrows ... */
 .touch-left .brake {
   grid-row: 1;
-  grid-column: 1 / span 2;
+  grid-column: 1;
   justify-self: start;
   width: min(66px, calc(var(--vw, 1vw) * 17));
   height: 40px;
   border-radius: 20px;
   font-size: 13px;
+}
+
+/* handbrake: beside the brake, for the left thumb. Hold it with a steer to
+   swing the tail left or right. */
+.touch-left .handbrake {
+  grid-row: 1;
+  grid-column: 2;
+  justify-self: end;
+  width: min(96px, calc(var(--vw, 1vw) * 25));
+  height: 40px;
+  border-radius: 20px;
+  border-color: rgb(255 170 60 / 85%);
+  background: rgb(120 60 20 / 55%);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.touch-left .handbrake.pressed {
+  background: rgb(255 130 40 / 75%);
 }
 
 /* ... or a big round button for the left thumb when tilting */
@@ -488,6 +513,15 @@ body[data-steer="tilt"] .touch-left .brake {
   height: min(92px, calc(var(--vw, 1vw) * 23));
   border-radius: 50%;
   font-size: 16px;
+}
+
+body[data-steer="tilt"] .touch-left .handbrake {
+  grid-row: 1;
+  grid-column: 2;
+  width: min(84px, calc(var(--vw, 1vw) * 21));
+  height: min(84px, calc(var(--vw, 1vw) * 21));
+  border-radius: 50%;
+  font-size: 13px;
 }
 
 .touch-right .mid {

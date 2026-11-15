@@ -1,15 +1,17 @@
 // Keyboard + phone controls.
 //
-// Keyboard: arrows / WASD to drive, Shift = drift, Space = nitro, P or Esc = pause.
+// Keyboard: arrows / WASD to drive, Shift = drift, Space = nitro, H = handbrake,
+// P or Esc = pause.
 //
 // Phone (default): the kart accelerates by itself and you steer by TILTING the
-// phone like a steering wheel. The only buttons used all the time are Nitro and
-// Brake. Drift is automatic when you turn hard (it can be switched back to a
-// button in the settings). If the phone has no motion sensor, or you pick
-// "Buttons", on-screen arrows steer instead.
+// phone like a steering wheel. The buttons used all the time are Nitro, Brake
+// and Handbrake (the lever that swings the tail left or right). Drift is
+// automatic when you turn hard (it can be switched back to a button in the
+// settings). If the phone has no motion sensor, or you pick "Buttons",
+// on-screen arrows steer instead.
 
 const keys = new Set();
-const touch = { left: false, right: false, brake: false, drift: false, nitro: false, item: false };
+const touch = { left: false, right: false, brake: false, drift: false, nitro: false, item: false, handbrake: false };
 let handlers = null;
 let steerValue = 0;
 let autoDriftOn = false;
@@ -219,10 +221,10 @@ export function setControls(next) {
 }
 
 // ---------- gamepad ----------
-// Any connected pad using the standard mapping can drive. The four driving
+// Any connected pad using the standard mapping can drive. The five driving
 // actions can be remapped from the menu; Start stays as the pause button.
 
-export const DefaultPadBindings = { gas: 0, brake: 1, drift: 2, nitro: 3 };
+export const DefaultPadBindings = { gas: 0, brake: 1, drift: 2, nitro: 3, handbrake: 5 };
 export const PadButtonNames = [
   "A", "B", "X", "Y", "LB", "RB", "LT", "RT", "Back", "Start", "L3", "R3", "Up", "Down", "Left", "Right",
 ];
@@ -262,6 +264,7 @@ export function gamepadInput(pad, bindings = padBindings) {
     brake: active(map.brake) || (spare(6) && value(6) > 0.15),
     drift: active(map.drift) || (spare(5) && pressed(5)),
     nitro: active(map.nitro) || (spare(4) && value(4) > 0.5),
+    handbrake: active(map.handbrake),
     item: pressed(6) || pressed(7),
     pause: pressed(9),
   };
@@ -419,6 +422,11 @@ export function readInput(dt) {
       autoDriftOn ||
       !!pad?.drift,
     nitro: keys.has("Space") || keys.has("KeyX") || touch.nitro || !!pad?.nitro,
+    handbrake:
+      keys.has("KeyH") ||
+      keys.has("KeyB") ||
+      touch.handbrake ||
+      !!pad?.handbrake,
     item: keys.has("KeyE") || keys.has("Enter") || touch.item || !!pad?.item,
   };
 }

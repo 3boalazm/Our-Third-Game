@@ -357,11 +357,12 @@ export function createRenderer(canvas, canvas3d = null) {
     ctx.restore();
   }
 
-  // Leave two dark lines behind a kart that is sliding or on the grass.
+  // Leave two dark lines behind a kart that is sliding, handbraking or on the grass.
   function rememberMarks(karts) {
     for (const kart of karts) {
       const laying =
-        (kart.drifting && kart.speed > 150) || (kart.offRoad && kart.speed > 120);
+        ((kart.drifting || kart.handbraking) && kart.speed > 150) ||
+        (kart.offRoad && kart.speed > 120);
       const cos = Math.cos(kart.a);
       const sin = Math.sin(kart.a);
       const rear = 20 * KartScale;

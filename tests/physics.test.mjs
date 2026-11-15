@@ -160,6 +160,63 @@ test("hitting the wall reports the impact and cancels the drift reward", () => {
   assert.equal(kart.driftReward, 0);
 });
 
+// A kart rolling straight ahead at a set speed, and a helper that holds an
+// input for a while and reports how far the nose turned and how much it slid.
+function rolling(speed = 400) {
+  const kart = newKart(track);
+  kart.vx = Math.cos(kart.a) * speed;
+  kart.vy = Math.sin(kart.a) * speed;
+  kart.speed = speed;
+  return kart;
+}
+
+function hold(kart, { steer = 0, handbrake = false, gas = true, seconds = 0.3 } = {}) {
+  const from = kart.a;
+  let slip = 0;
+  for (let i = 0; i < Math.round(seconds / FixedStep); i += 1) {
+    stepKart(kart, { steer, gas, brake: false, drift: false, nitro: false, handbrake }, FixedStep, track, true);
+    const fx = Math.cos(kart.a);
+    const fy = Math.sin(kart.a);
+    slip = Math.max(slip, Math.abs(kart.vx * -fy + kart.vy * fx));
+  }
+  return { yaw: (angleDiff(kart.a, from) * 180) / Math.PI, slip, speed: kart.speed };
+}
+
+test("the handbrake swings the tail left or right and scrubs speed", () => {
+  const plain = hold(rolling(), { steer: 1 });
+  const pulled = hold(rolling(), { steer: 1, handbrake: true });
+  assert.ok(pulled.yaw > plain.yaw * 1.4, `handbrake turned ${pulled.yaw} vs ${plain.yaw}`);
+  assert.ok(pulled.slip > plain.slip * 1.3, `handbrake slip ${pulled.slip} vs ${plain.slip}`);
+  assert.ok(pulled.speed < plain.speed * 0.85, `handbrake should scrub speed (${pulled.speed} vs ${plain.speed})`);
+  assert.ok(pulled.yaw > 30 && pulled.yaw < 110, `0.3 s of handbrake should be a swing, not a spin: ${pulled.yaw}`);
+
+  // the same lever, steering the other way, swings the other way
+  const left = hold(rolling(), { steer: -1, handbrake: true });
+  assert.ok(left.yaw < -30, `left handbrake turn only turned ${left.yaw}`);
+  assert.ok(Math.abs(Math.abs(left.yaw) - pulled.yaw) < 1, "left and right swings should match");
+});
+
+test("the handbrake in a straight line only slows the kart", () => {
+  const straight = hold(rolling(), { steer: 0, handbrake: true });
+  assert.ok(Math.abs(straight.yaw) < 0.5, `the kart should not turn on its own: ${straight.yaw}`);
+  assert.ok(straight.speed < 400 && straight.speed > 250, `speed ${straight.speed}`);
+});
+
+test("the handbrake at walking pace is just a brake", () => {
+  const kart = rolling(40);
+  hold(kart, { steer: 1, handbrake: true, seconds: 1 });
+  assert.equal(kart.handbraking, false, "too slow to lock the back wheels");
+  assert.ok(kart.speed < 5, `the kart should stop, not swing: ${kart.speed}`);
+});
+
+test("the handbrake cuts the engine and does not burn nitro", () => {
+  const kart = rolling(400);
+  kart.nitro = 1;
+  hold(kart, { steer: 0.6, handbrake: true, gas: true, seconds: 0.4 });
+  assert.ok(kart.speed < 400, `the engine should be cut while handbraking: ${kart.speed}`);
+  assert.ok(kart.nitro > 0.99, `nitro must not drain while handbraking: ${kart.nitro}`);
+});
+
 test("slipstream is strongest right behind a fast kart in line", () => {
   const kart = newKart(track);
   kart.a = 0;

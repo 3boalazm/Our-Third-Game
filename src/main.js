@@ -31,6 +31,8 @@ import {
   coinsForRace,
   isOwned,
   itemFor,
+  previewItem,
+  previewUpgrade,
   readGarage,
   upgradeCost,
 } from "./garage.js";
@@ -270,6 +272,7 @@ root.innerHTML = `
     <button type="button" id="tilt-reset-btn" class="tilt-reset-btn" aria-label="Reset gyroscope center">↺ RESET GYRO</button>
     <div class="touch-left">
       <button type="button" class="brake" data-touch="brake" aria-label="Brake">Brake</button>
+      <button type="button" class="handbrake" data-touch="handbrake" aria-label="Handbrake: flick the tail left or right">Handbrake</button>
       <button type="button" class="steer" data-touch="left" aria-label="Steer left">&#9664;</button>
       <button type="button" class="steer" data-touch="right" aria-label="Steer right">&#9654;</button>
     </div>
@@ -667,11 +670,11 @@ function showTip() {
   prefs.tipSeen = true;
   savePrefs();
   let text =
-    "Nitro starts at 30%. Collect glowing NITRO canisters on the road for +35% fuel. Hold Space to boost; clean drifts refill faster, and blue chevrons give a separate short burst.";
+    "Nitro starts at 30%. Collect glowing NITRO canisters on the road for +35% fuel. Hold Space to boost; clean drifts refill faster, and blue chevrons give a separate short burst. H is the handbrake: hold it with a steer to swing the tail.";
   if (isTouchDevice) {
     text = prefs.steer === "tilt"
-      ? "Collect glowing NITRO canisters on the road for +35% fuel. Hold Nitro to boost; turn hard to drift, then straighten for a refill. Blue pads give a separate short burst."
-      : "Collect glowing NITRO canisters on the road for +35% fuel. Hold Nitro to boost; drift through a turn, then release for a refill. Blue pads give a separate short burst.";
+      ? "Collect glowing NITRO canisters on the road for +35% fuel. Hold Nitro to boost; turn hard to drift, then straighten for a refill. Hold Handbrake with a turn to swing the tail."
+      : "Collect glowing NITRO canisters on the road for +35% fuel. Hold Nitro to boost; drift through a turn, then release for a refill. Handbrake swings the tail through a hairpin.";
   }
   tipEl.textContent = text;
   tipEl.hidden = false;
@@ -777,6 +780,7 @@ function updateRemote(dt, now) {
   remote.speed = target.v;
   remote.nitroOn = target.nitroOn;
   remote.drifting = target.drifting;
+  remote.handbraking = target.handbraking;
   if (!remote.finished) {
     remote.progress = target.p;
   }
@@ -922,7 +926,7 @@ function emitEffects(kart) {
   const rearX = kart.x - cos * rear;
   const rearY = kart.y - sin * rear;
 
-  if (kart.drifting && kart.speed > 180) {
+  if ((kart.drifting || kart.handbraking) && kart.speed > 180) {
     for (const side of [-1, 1]) {
       fx.emit(
         "smoke",
@@ -1207,7 +1211,7 @@ function update(dt, now) {
         v: Math.round(me.speed),
         p: Math.round(me.progress * 10) / 10,
         f: me.finished ? me.finishTime : 0, // repeated, so a lost "fin" message heals itself
-        m: (me.nitroOn ? 1 : 0) | (me.drifting ? 2 : 0), // effects: nitro flame, drift smoke
+        m: (me.nitroOn ? 1 : 0) | (me.drifting ? 2 : 0) | (me.handbraking ? 4 : 0), // effects: nitro flame, drift smoke, handbrake slide
         b: Math.round(me.bestLap * 1000) / 1000, // best lap so far
       });
     }
@@ -1549,6 +1553,7 @@ function showMenu() {
             <section class="garage-showcase garage-stage">
               <canvas class="garage-canvas" data-role="garage-canvas" aria-label="Your kart in the garage"></canvas>
               <div class="garage-stage-top"><span class="eyebrow">PLAYER KART · CUSTOM BUILD</span><span class="coin-chip lg" data-role="garage-coins">0</span></div>
+              <div class="garage-preview-badge" data-role="garage-preview-badge" hidden>PREVIEW</div>
               <div class="garage-stats" data-role="garage-stats"></div>
               <div class="showcase-caption"><span>DRAG TO TURN</span><strong data-role="garage-colour-name">BLUE / RACING STRIPE</strong></div>
             </section>
@@ -1559,7 +1564,7 @@ function showMenu() {
                 <button type="button" class="garage-tab" data-garage-tab="parts">Parts</button>
               </div>
               <div class="garage-tab-body" data-role="garage-body"></div>
-              <div class="garage-tip"><span>✦</span> Win races, drift and overtake to earn coins. Everything is saved on this device.</div>
+              <div class="garage-tip"><span>✦</span> Win races, drift and overtake to earn coins. Tap anything to preview it first — coins are only spent when you press BUY. Everything is saved on this device.</div>
               <button type="button" class="panel-primary-action" data-menu-page="home">BACK TO HOME <b>↗</b></button>
             </section>
           </div>
@@ -1584,7 +1589,7 @@ function showMenu() {
               <div class="setup-field"><span class="field-label">FULLSCREEN</span><div data-slot="fullscreen"></div></div>
             </section>` : ""}
             <section class="menu-panel controls-guide"><div class="panel-heading"><span>QUICK CONTROLS</span><span>HOW TO PLAY</span></div>
-              <div class="control-guide-row"><kbd>WASD</kbd><span>Steer and accelerate</span></div><div class="control-guide-row"><kbd>SHIFT</kbd><span>Hold while turning to drift</span></div><div class="control-guide-row"><kbd>SPACE</kbd><span>Fire your nitro boost</span></div><div class="control-guide-row"><kbd>P / ESC</kbd><span>Pause the race</span></div><div class="control-guide-row"><kbd>C</kbd><span>Switch camera mode</span></div>
+              <div class="control-guide-row"><kbd>WASD</kbd><span>Steer and accelerate</span></div><div class="control-guide-row"><kbd>SHIFT</kbd><span>Hold while turning to drift</span></div><div class="control-guide-row"><kbd>H</kbd><span>Handbrake: swing the tail left or right</span></div><div class="control-guide-row"><kbd>SPACE</kbd><span>Fire your nitro boost</span></div><div class="control-guide-row"><kbd>P / ESC</kbd><span>Pause the race</span></div><div class="control-guide-row"><kbd>C</kbd><span>Switch camera mode</span></div>
               <p class="settings-intro">A clean drift charges your nitro. Blue pads give you a free boost, and following a rival closely creates a slipstream.</p>
             </section>
           </div>
@@ -1597,12 +1602,48 @@ function showMenu() {
   // ---------- garage ----------
   let garageTab = "upgrades";
   let garageView = null;
+  // A tap on something you do not own only PREVIEWS it: you see it on the kart,
+  // what it costs and what is left in the wallet. Nothing is bought until the
+  // player presses BUY on the preview card.
+  let garagePreview = null; // { kind: "part", slot, id } | { kind: "upgrade", id }
   const garageCanvas = element.querySelector('[data-role="garage-canvas"]');
+  const garagePreviewBadge = element.querySelector('[data-role="garage-preview-badge"]');
+  const money = (n) => Math.max(0, Math.round(n)).toLocaleString("en-US");
+  const previewInfo = () =>
+    !garagePreview
+      ? null
+      : garagePreview.kind === "upgrade"
+        ? previewUpgrade(prefs, garagePreview.id)
+        : previewItem(prefs, garagePreview.slot, garagePreview.id);
+  // What the kart on the turntable should look like right now (preview included).
+  const garageLook = () => {
+    const look = {
+      color: prefs.color,
+      livery: prefs.livery,
+      wheels: prefs.wheels,
+      spoiler: prefs.spoiler,
+    };
+    if (garagePreview?.kind === "part") look[garagePreview.slot] = garagePreview.id;
+    return look;
+  };
+  const paintGarageKart = () => {
+    garageView?.setKart(garageLook());
+    if (garagePreviewBadge) {
+      const info = previewInfo();
+      garagePreviewBadge.hidden = !info;
+      garagePreviewBadge.textContent = info ? `PREVIEW · ${info.name.toUpperCase()}` : "";
+    }
+  };
+  const setGaragePreview = (next) => {
+    garagePreview = next;
+    paintGarageKart();
+    renderGarage();
+  };
   const showGarageView = (on) => {
     if (on && !garageView && garageCanvas) garageView = createGarageView(garageCanvas);
     if (!garageView) return;
     if (on) {
-      garageView.setKart({ color: prefs.color, livery: prefs.livery, wheels: prefs.wheels, spoiler: prefs.spoiler });
+      paintGarageKart();
       garageView.start();
     } else {
       garageView.stop();
@@ -1611,9 +1652,112 @@ function showMenu() {
   activeGarageView = () => garageView;
   const flash = (text, kind = "good") => showToast(text, kind, 1300);
   const garageBody = element.querySelector('[data-role="garage-body"]');
+
+  // The card under the item you tapped: what it is, what it costs and the two
+  // buttons that actually decide (buy / cancel). Nothing is spent before this.
+  function buildPreviewCard() {
+    const info = previewInfo();
+    if (!info) return null;
+    const card = document.createElement("div");
+    card.className = "garage-preview-card";
+    card.dataset.role = "garage-preview";
+    card.dataset.kind = info.kind;
+
+    const text = document.createElement("div");
+    text.className = "garage-preview-text";
+    const eyebrow = document.createElement("span");
+    eyebrow.className = "eyebrow";
+    eyebrow.textContent = "PREVIEW · NOTHING BOUGHT YET";
+    const title = document.createElement("strong");
+    title.textContent = info.name;
+    const detail = document.createElement("small");
+    if (info.kind === "part") {
+      if (info.owned) {
+        detail.textContent = "Already yours — fitting it is free";
+      } else if (info.affordable) {
+        detail.textContent = `${money(info.cost)} coins · you have ${money(prefs.coins)} · ${money(info.coinsAfter)} left after buying`;
+      } else {
+        detail.textContent = `${money(info.cost)} coins · you need ${money(info.cost - prefs.coins)} more coins`;
+      }
+    } else if (info.maxed) {
+      detail.textContent = `${info.stat} is already at level ${info.level}/${MaxLevel}`;
+    } else {
+      const from = Math.round(info.level * info.perLevel * 100);
+      const to = Math.round(info.nextLevel * info.perLevel * 100);
+      detail.textContent = `${info.stat} +${from}% → +${to}% · level ${info.level} → ${info.nextLevel} · ${money(info.cost)} coins${info.affordable ? "" : ` (need ${money(info.cost - prefs.coins)} more)`}`;
+    }
+    text.append(eyebrow, title, detail);
+
+    const actions = document.createElement("div");
+    actions.className = "garage-preview-actions";
+    const confirm = document.createElement("button");
+    confirm.type = "button";
+    confirm.className = "garage-buy";
+    if (info.maxed) {
+      confirm.textContent = "MAXED";
+      confirm.disabled = true;
+    } else if (!info.affordable) {
+      const short = info.cost - prefs.coins;
+      confirm.textContent = `NEED ${money(short)} MORE`;
+      confirm.classList.add("short");
+      confirm.addEventListener("click", () => flash(`You need ${money(short)} more coins`, "warn"));
+    } else {
+      confirm.textContent = info.cost === 0 ? "FIT IT" : `BUY · ${money(info.cost)}`;
+      confirm.addEventListener("click", confirmGaragePreview);
+    }
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "garage-cancel";
+    cancel.textContent = "CANCEL";
+    cancel.addEventListener("click", () => setGaragePreview(null));
+    actions.append(confirm, cancel);
+
+    card.append(text, actions);
+    return card;
+  }
+
+  // The only place that spends coins: the BUY button on the preview card.
+  function confirmGaragePreview() {
+    const info = previewInfo();
+    if (!info) return;
+    if (info.kind === "upgrade") {
+      if (!buyUpgrade(prefs, info.id)) {
+        flash(`You need ${money(info.cost - prefs.coins)} more coins`, "warn");
+        return;
+      }
+      savePrefs();
+      audio.boost();
+      flash(`${info.name} upgraded to level ${prefs.upgrades[info.id]}!`);
+    } else {
+      const result = buyOrFit(prefs, info.slot, info.id);
+      if (result === "short") {
+        flash(`You need ${money(info.cost - prefs.coins)} more coins`, "warn");
+        return;
+      }
+      savePrefs();
+      if (result === "bought") {
+        audio.boost();
+        flash(`${info.name} unlocked and fitted!`);
+      }
+    }
+    garagePreview = null;
+    paintGarageKart();
+    renderGarage();
+  }
+
+  // Tapping the item that is already being previewed closes the preview.
+  const tapPreview = (next) => {
+    const same =
+      garagePreview &&
+      next &&
+      garagePreview.kind === next.kind &&
+      (next.kind === "upgrade" ? garagePreview.id === next.id : garagePreview.slot === next.slot && garagePreview.id === next.id);
+    setGaragePreview(same ? null : next);
+  };
+
   function renderGarage() {
     if (!garageBody) return;
-    const coinsText = prefs.coins.toLocaleString("en-US");
+    const coinsText = money(prefs.coins);
     element.querySelectorAll('[data-role="garage-coins"], [data-role="top-coins"]').forEach((el) => {
       el.textContent = coinsText;
     });
@@ -1621,15 +1765,20 @@ function showMenu() {
     const liveryItem = itemFor("livery", prefs.livery);
     element.querySelector('[data-role="garage-colour-name"]').textContent =
       `${(colorItem?.name ?? "Custom").toUpperCase()} / ${(liveryItem?.name ?? prefs.livery).toUpperCase()}`;
-    // stat bars on the stage
+    // stat bars on the stage (the level a preview would take you to is marked)
+    const previewUp = garagePreview?.kind === "upgrade" ? garagePreview.id : null;
     const stats = element.querySelector('[data-role="garage-stats"]');
     stats.replaceChildren(
       ...Upgrades.map((up) => {
         const row = document.createElement("div");
         row.className = "garage-stat";
         const level = prefs.upgrades[up.id];
+        const shown = previewUp === up.id ? Math.min(MaxLevel, level + 1) : level;
         row.innerHTML = `<span>${up.stat}</span><i>${"<b></b>".repeat(MaxLevel)}</i>`;
-        row.querySelectorAll("b").forEach((b, i) => b.classList.toggle("on", i < level));
+        row.querySelectorAll("b").forEach((b, i) => {
+          b.classList.toggle("on", i < level);
+          b.classList.toggle("next", i >= level && i < shown);
+        });
         return row;
       }),
     );
@@ -1643,27 +1792,23 @@ function showMenu() {
         row.className = "garage-item upgrade";
         row.innerHTML = `<div class="garage-item-text"><strong></strong><small></small><i class="pips">${"<b></b>".repeat(MaxLevel)}</i></div><button type="button" class="garage-buy"></button>`;
         row.querySelector("strong").textContent = `${up.name} · Level ${level}/${MaxLevel}`;
-        row.querySelector("small").textContent = `${up.stat} +${Math.round(up.perLevel * 100)}% per level`;
+        row.querySelector("small").textContent = `${up.stat} +${Math.round(up.perLevel * 100)}% per level${cost != null ? ` · next level ${money(cost)} coins` : ""}`;
         row.querySelectorAll(".pips b").forEach((b, i) => b.classList.toggle("on", i < level));
         const buy = row.querySelector("button");
         if (cost == null) {
           buy.textContent = "MAXED";
           buy.disabled = true;
         } else {
-          buy.innerHTML = `UPGRADE <span class="coin-chip small">${cost.toLocaleString("en-US")}</span>`;
+          buy.textContent = "PREVIEW";
           buy.classList.toggle("short", prefs.coins < cost);
-          buy.addEventListener("click", () => {
-            if (buyUpgrade(prefs, up.id)) {
-              savePrefs();
-              audio.boost();
-              flash(`${up.name} upgraded to level ${prefs.upgrades[up.id]}!`);
-              renderGarage();
-            } else {
-              flash(`You need ${(cost - prefs.coins).toLocaleString("en-US")} more coins`, "warn");
-            }
-          });
+          buy.classList.toggle("previewing", previewUp === up.id);
+          buy.addEventListener("click", () => tapPreview({ kind: "upgrade", id: up.id }));
         }
         rows.push(row);
+        if (previewUp === up.id) {
+          const card = buildPreviewCard();
+          if (card) rows.push(card);
+        }
       }
     } else {
       const slots = garageTab === "paint" ? [["color", "Body colour"], ["livery", "Livery"]] : [["wheels", "Wheels"], ["spoiler", "Rear wing"]];
@@ -1679,9 +1824,10 @@ function showMenu() {
         for (const item of Catalogue[slot]) {
           const owned = isOwned(prefs, slot, item.id);
           const fitted = prefs[slot] === item.id;
+          const previewing = garagePreview?.kind === "part" && garagePreview.slot === slot && garagePreview.id === item.id;
           const btn = document.createElement("button");
           btn.type = "button";
-          btn.className = `garage-part${fitted ? " fitted" : ""}${owned ? "" : " locked"}`;
+          btn.className = `garage-part${fitted ? " fitted" : ""}${owned ? "" : " locked"}${previewing ? " previewing" : ""}`;
           btn.title = item.name;
           if (slot === "color") {
             btn.innerHTML = `<i class="swatch-dot"></i><small></small>`;
@@ -1691,26 +1837,30 @@ function showMenu() {
             btn.querySelector("strong").textContent = item.name;
           }
           const tag = btn.querySelector("small");
-          if (fitted) tag.textContent = "FITTED";
+          if (previewing) tag.textContent = "PREVIEW";
+          else if (fitted) tag.textContent = "FITTED";
           else if (owned) tag.textContent = slot === "color" ? item.name : "OWNED";
-          else tag.innerHTML = `<span class="coin-chip small">${item.cost.toLocaleString("en-US")}</span>`;
+          else tag.innerHTML = `<span class="coin-chip small">${money(item.cost)}</span>`;
           btn.addEventListener("click", () => {
-            const result = buyOrFit(prefs, slot, item.id);
-            if (result === "short") {
-              flash(`You need ${(item.cost - prefs.coins).toLocaleString("en-US")} more coins`, "warn");
+            // Already yours: fitting costs nothing, so it happens on the tap.
+            if (owned) {
+              buyOrFit(prefs, slot, item.id);
+              savePrefs();
+              garagePreview = null;
+              paintGarageKart();
+              renderGarage();
               return;
             }
-            savePrefs();
-            if (result === "bought") {
-              audio.boost();
-              flash(`${item.name} unlocked!`);
-            }
-            garageView?.setKart({ color: prefs.color, livery: prefs.livery, wheels: prefs.wheels, spoiler: prefs.spoiler });
-            renderGarage();
+            // Locked: show it on the kart first, buy only from the preview card.
+            tapPreview({ kind: "part", slot, id: item.id });
           });
           grid.append(btn);
         }
         rows.push(grid);
+        if (garagePreview?.kind === "part" && garagePreview.slot === slot) {
+          const card = buildPreviewCard();
+          if (card) rows.push(card);
+        }
       }
     }
     garageBody.replaceChildren(...rows);
@@ -1718,11 +1868,18 @@ function showMenu() {
   element.querySelectorAll("[data-garage-tab]").forEach((tab) => {
     tab.addEventListener("click", () => {
       garageTab = tab.dataset.garageTab;
+      garagePreview = null;
+      paintGarageKart();
       renderGarage();
     });
   });
 
   const activateMenuPage = (page) => {
+    // Leaving the garage drops any preview: nothing half-decided follows you.
+    if (page !== "garage" && garagePreview) {
+      garagePreview = null;
+      paintGarageKart();
+    }
     try {
       showGarageView(page === "garage");
     } catch (err) {
@@ -1830,6 +1987,7 @@ function showMenu() {
       ["brake", "Brake"],
       ["drift", "Drift"],
       ["nitro", "Nitro"],
+      ["handbrake", "Handbrake"],
     ];
     for (const [action, label] of rows) {
       const button = document.createElement("button");
@@ -2939,6 +3097,7 @@ function handleMessage(message) {
         p: message.p,
         nitroOn: (message.m & 1) === 1,
         drifting: (message.m & 2) === 2,
+        handbraking: (message.m & 4) === 4,
         bestLap: Number.isFinite(message.b) ? message.b : 0,
         t: performance.now(),
       };
@@ -3062,7 +3221,7 @@ function updateAudio() {
     speed01: me.speed / Physics.maxSpeed,
     throttle: counting ? 0.15 : lastInput.gas || me.nitroOn ? 1 : 0.2,
     nitro: me.nitroOn,
-    drifting: me.drifting,
+    drifting: me.drifting || me.handbraking,
     offRoad: me.offRoad,
   });
 }
