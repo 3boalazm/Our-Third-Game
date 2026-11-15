@@ -112,6 +112,48 @@ export function buyOrFit(state, slot, id) {
   return "fitted";
 }
 
+// What a tap on an item would cost and do, WITHOUT doing any of it. The garage
+// shows this as a preview first: the item is put on the kart on the turntable
+// and the actual purchase only happens when the player confirms it.
+export function previewItem(state, slot, id) {
+  const item = itemFor(slot, id);
+  if (!item) return null;
+  const owned = isOwned(state, slot, id);
+  const cost = owned ? 0 : item.cost;
+  return {
+    kind: "part",
+    slot,
+    id,
+    name: item.name,
+    owned,
+    fitted: state[slot] === id,
+    cost,
+    affordable: owned || state.coins >= cost,
+    coinsAfter: state.coins - cost,
+  };
+}
+
+// Same, for one level of an upgrade.
+export function previewUpgrade(state, id) {
+  const up = Upgrades.find((item) => item.id === id);
+  if (!up) return null;
+  const level = state.upgrades[id] ?? 0;
+  const cost = upgradeCost(state, id);
+  return {
+    kind: "upgrade",
+    id,
+    name: up.name,
+    stat: up.stat,
+    perLevel: up.perLevel,
+    level,
+    nextLevel: cost == null ? level : level + 1,
+    maxed: cost == null,
+    cost: cost ?? 0,
+    affordable: cost != null && state.coins >= cost,
+    coinsAfter: cost == null ? state.coins : state.coins - cost,
+  };
+}
+
 // How much the upgrades change the kart (multipliers, 1 = stock).
 export function upgradeMultipliers(levels = {}) {
   const lv = (id) => Math.max(0, Math.min(MaxLevel, levels[id] ?? 0));

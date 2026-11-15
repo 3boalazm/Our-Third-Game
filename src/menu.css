@@ -403,6 +403,19 @@ html.short .hud-box.right .nitro-status {
 .garage-part strong{font-size:10px;line-height:1.2}.garage-part small{color:#8ea3bf;font-size:8px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}
 .garage-part.fitted{border-color:#7da8f7;background:rgba(94,139,219,.2);box-shadow:0 0 0 2px rgba(125,168,247,.25)}.garage-part.fitted small{color:#9fc4ff}
 .garage-part.locked{opacity:.88}.garage-part.locked:after{position:absolute;top:5px;right:6px;font-size:9px;content:"🔒"}
+.garage-part.previewing{border-color:#ffc65c;background:rgba(255,190,60,.16);box-shadow:0 0 0 2px rgba(255,198,92,.28)}
+.garage-part.previewing small{color:#ffd77a}
+.garage-item .garage-buy.previewing{background:#ffc65c;box-shadow:0 0 0 2px rgba(255,198,92,.35)}
+.garage-preview-card{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:12px;border:1px solid rgba(255,198,92,.42);border-radius:11px;background:linear-gradient(145deg,rgba(255,190,60,.14),rgba(10,20,34,.72))}
+.garage-preview-text{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 190px}
+.garage-preview-text .eyebrow{color:#ffd77a;font-size:8px;letter-spacing:.14em}
+.garage-preview-text strong{color:#fff4dc;font-size:12px;letter-spacing:.03em}
+.garage-preview-text small{color:#e2c99a;font-size:10px;line-height:1.45}
+.garage-preview-actions{display:flex;align-items:center;gap:7px;flex:0 0 auto}
+.garage-cancel{min-height:36px;padding:0 11px;border:1px solid rgba(172,195,228,.25);border-radius:8px;background:transparent;color:#b9c8dc;font-size:10px;font-weight:900;letter-spacing:.06em;cursor:pointer}
+.garage-cancel:active{background:rgba(255,255,255,.08)}
+.garage-preview-badge{position:absolute;top:64px;right:18px;padding:5px 10px;border:1px solid rgba(255,198,92,.6);border-radius:999px;background:rgba(255,180,50,.16);color:#ffd77a;font-size:9px;font-weight:1000;letter-spacing:.12em;pointer-events:none}
+.garage-stat b.next{background:linear-gradient(90deg,#ffc65c,#ffe6a8);box-shadow:0 0 8px rgba(255,198,92,.5)}
 .swatch-dot{display:block;width:28px;height:28px;border:2px solid rgba(255,255,255,.35);border-radius:50%;box-shadow:0 3px 10px rgba(0,0,0,.3)}
 .coin-reward{margin:6px 0 12px;padding:12px 14px;border:1px solid rgba(255,206,92,.28);border-radius:12px;background:rgba(255,190,60,.08)}
 .coin-head{display:flex;justify-content:space-between;align-items:baseline}.coin-head span{color:#ffd77a;font-size:10px;font-weight:900;letter-spacing:.14em}.coin-head strong{color:#ffe08f;font-size:24px}

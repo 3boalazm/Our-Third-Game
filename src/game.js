@@ -19,6 +19,18 @@ export const Physics = {
   offRoadFactor: 0.42, // top speed on grass relative to the road
   barrierMargin: 95, // invisible wall this far outside the road edge
 
+  // Handbrake: locks the back wheels, so the tail swings left or right and the
+  // kart pivots much faster than a normal turn while it scrubs speed. It is the
+  // tool for a hairpin (or for catching a slide). A long handbrake slide can
+  // still pay a little nitro when you release it cleanly; drift is the fast way
+  // to fill the tank.
+  handbrakeGrip: 6.5, // sideways slide that survives while the lever is held
+  handbrakeTurn: 1.35, // extra turn rate: the kart swings round faster
+  handbrakeFlick: 0.22, // one-off yaw kick (radians) when pulled with the wheels turned
+  handbrakeDrag: 0.38, // speed lost per second while the wheels are locked
+  handbrakeCoast: 3.2, // slow speed: no thrust at all, it just comes to a stop
+  handbrakeMinSpeed: 90, // below this it only brakes, it does not swing
+
   // Drift: hold the button while steering to slide. A long, clean slide that
   // you release on the road is paid back as nitro and a short mini-boost.
   driftGrip: 5,
@@ -106,6 +118,7 @@ export function makeKart({
     nitro: Physics.startNitro, // 0..1 tank
     nitroOn: false,
     drifting: false,
+    handbraking: false, // the lever is pulled and the back wheels are locked
     driftTime: 0, // seconds of the current slide
     driftNitroReward: 0, // one-shot nitro earned by the last clean drift
     boostTimer: 0, // seconds of mini-boost left
@@ -165,6 +178,7 @@ export function placeOnGrid(kart, track, slot) {
   kart.nitro = Physics.startNitro;
   kart.nitroOn = false;
   kart.drifting = false;
+  kart.handbraking = false;
   kart.driftTime = 0;
   kart.driftNitroReward = 0;
   kart.boostTimer = 0;
@@ -249,8 +263,19 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
   kart.draft = draft;
   kart.drafting = draft > 0.35;
 
+  // --- handbrake ---
+  // Pulling the lever locks the back wheels: no thrust, the slide lives much
+  // longer, and the nose is free to swing left or right. Off the road (or too
+  // slow) it is just a brake.
+  const handbraking =
+    canDrive &&
+    !!input.handbrake &&
+    !input.brake &&
+    onRoad &&
+    Math.abs(along) > P.handbrakeMinSpeed;
+
   // --- nitro tank ---
-  if (canDrive && input.nitro && kart.nitro > (kart.nitroOn ? 0 : P.nitroStartMin)) {
+  if (canDrive && input.nitro && !input.handbrake && kart.nitro > (kart.nitroOn ? 0 : P.nitroStartMin)) {
     kart.nitroOn = true;
     kart.nitro = Math.max(0, kart.nitro - P.nitroDrain * dt);
     if (kart.nitro === 0) kart.nitroOn = false;
@@ -276,8 +301,12 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
     (kart.topScale ?? 1) *
     rubber;
 
-  // --- throttle / brake ---
-  if (canDrive && (input.gas || kart.nitroOn) && !input.brake) {
+  // --- throttle / brake / handbrake ---
+  if (canDrive && handbraking) {
+    along *= Math.exp(-P.handbrakeDrag * dt); // rear wheels locked, engine cut
+  } else if (canDrive && input.handbrake) {
+    along *= Math.exp(-P.handbrakeCoast * dt); // too slow to swing: it just stops
+  } else if (canDrive && (input.gas || kart.nitroOn) && !input.brake) {
     if (along < top) {
       along = Math.min(top, along + P.accel * thrust * (kart.accelScale ?? 1) * dt);
     }
@@ -298,6 +327,10 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
   if (drifting) {
     if (slip > P.driftSlipMin) kart.driftTime += dt;
     along *= Math.exp(-P.driftSpeedLoss * dt);
+  } else if (handbraking) {
+    // A handbrake slide counts as a slide too, so a long one that you release
+    // cleanly on the road is still paid back with nitro.
+    if (slip > P.driftSlipMin) kart.driftTime += dt;
   } else if (kart.driftTime > 0) {
     if (kart.driftTime >= P.driftMinTime && onRoad) {
       const nitroBeforeDrift = kart.nitro;
@@ -313,14 +346,27 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
     kart.driftTime = 0;
   }
   kart.drifting = drifting;
-  side *= Math.exp(-(drifting ? P.driftGrip : P.grip) * (kart.grip ?? 1) * dt);
+  // The loosest thing the player is doing wins: a drift and a handbrake
+  // together slide more than either on its own.
+  let gripNow = P.grip;
+  if (drifting) gripNow = P.driftGrip;
+  if (handbraking) gripNow = Math.min(gripNow, P.handbrakeGrip);
+  side *= Math.exp(-gripNow * (kart.grip ?? 1) * dt);
 
   // --- steering ---
   const control = clamp(Math.abs(along) / 170, 0, 1);
   const slowDown = 1 - 0.3 * clamp(Math.abs(along) / P.maxSpeed, 0, 1);
+  const turnBoost = Math.max(drifting ? P.driftTurn : 1, handbraking ? P.handbrakeTurn : 1);
+  // A pull of the lever with the wheels turned snaps the tail round at once,
+  // so the kart visibly goes right or left instead of easing into the slide.
+  if (handbraking && !kart.handbraking && Math.abs(steer) > 0.2) {
+    const bite = clamp(Math.abs(along) / P.maxSpeed, 0.25, 1);
+    kart.a += Math.sign(steer) * P.handbrakeFlick * bite;
+  }
   kart.a +=
-    steer * P.turnRate * (drifting ? P.driftTurn : 1) * control * slowDown *
+    steer * P.turnRate * turnBoost * control * slowDown *
     (kart.steerScale ?? 1) * (along >= 0 ? 1 : -1) * dt;
+  kart.handbraking = handbraking;
 
   // Rebuild the velocity with the heading from *before* this step's steering.
   // The kart then keeps travelling where it was going while its nose turns, so

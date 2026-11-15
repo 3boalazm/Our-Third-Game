@@ -9,6 +9,8 @@ import {
   buyUpgrade,
   coinsForRace,
   isOwned,
+  previewItem,
+  previewUpgrade,
   readGarage,
   upgradeCost,
   upgradeMultipliers,
@@ -105,4 +107,57 @@ test("race coins reward the finishing place and the extras", () => {
   // longer races pay more, a time trial has no position prize
   assert.ok(coinsForRace({ place: 1, laps: 5 }).total > win.total);
   assert.ok(coinsForRace({ mode: "trial", laps: 3 }).total < win.total);
+});
+
+test("a preview shows the price without spending a single coin", () => {
+  const g = readGarage({ coins: 700 });
+  const part = previewItem(g, "wheels", "sport");
+  assert.equal(part.name, "Gold sport rims");
+  assert.equal(part.cost, 500);
+  assert.equal(part.affordable, true);
+  assert.equal(part.coinsAfter, 200);
+  // nothing happened to the garage state
+  assert.equal(g.coins, 700);
+  assert.equal(g.wheels, "standard");
+  assert.equal(isOwned(g, "wheels", "sport"), false);
+
+  const tooDear = previewItem(g, "color", "#c9a24b");
+  assert.equal(tooDear.affordable, false);
+  assert.equal(tooDear.cost, 1200);
+  assert.equal(tooDear.coinsAfter, -500); // the card says how much is missing
+
+  const mine = previewItem(g, "wheels", "standard");
+  assert.equal(mine.owned, true);
+  assert.equal(mine.cost, 0);
+  assert.equal(mine.coinsAfter, 700);
+
+  assert.equal(previewItem(g, "wheels", "nope"), null);
+});
+
+test("an upgrade preview spells out the next level and what it costs", () => {
+  const g = readGarage({ coins: 300, upgrades: { engine: 1 } });
+  const preview = previewUpgrade(g, "engine");
+  assert.equal(preview.level, 1);
+  assert.equal(preview.nextLevel, 2);
+  assert.equal(preview.cost, UpgradeCosts[1]);
+  assert.equal(preview.affordable, false); // 500 coins for 300 in the wallet
+  assert.equal(g.upgrades.engine, 1);
+  assert.equal(g.coins, 300);
+
+  // after a confirmed buy the preview matches the new state
+  g.coins = 900;
+  assert.equal(buyUpgrade(g, "engine"), true);
+  assert.equal(previewUpgrade(g, "engine").level, 2);
+  assert.equal(previewUpgrade(g, "engine").cost, UpgradeCosts[2]);
+});
+
+test("a maxed upgrade has nothing left to preview or buy", () => {
+  const g = readGarage({ coins: 99999, upgrades: { accel: MaxLevel } });
+  const preview = previewUpgrade(g, "accel");
+  assert.equal(preview.maxed, true);
+  assert.equal(preview.nextLevel, MaxLevel);
+  assert.equal(preview.cost, 0);
+  assert.equal(preview.affordable, false);
+  assert.equal(buyUpgrade(g, "accel"), false);
+  assert.equal(previewUpgrade(g, "nope"), null);
 });
