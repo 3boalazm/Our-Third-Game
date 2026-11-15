@@ -23,13 +23,17 @@ export const Physics = {
   // kart pivots much faster than a normal turn while it scrubs speed. It is the
   // tool for a hairpin (or for catching a slide). A long handbrake slide can
   // still pay a little nitro when you release it cleanly; drift is the fast way
-  // to fill the tank.
+  // to fill the tank. Both the foot brake and the lever can be softened or
+  // sharpened from the sensitivity sliders (see applyDrivingTuning).
   handbrakeGrip: 6.5, // sideways slide that survives while the lever is held
-  handbrakeTurn: 1.35, // extra turn rate: the kart swings round faster
+  handbrakeTurn: 1.2, // extra turn rate: the kart swings round faster
   handbrakeFlick: 0.22, // one-off yaw kick (radians) when pulled with the wheels turned
-  handbrakeDrag: 0.38, // speed lost per second while the wheels are locked
+  handbrakeDrag: 0.3, // speed lost per second while the wheels are locked
   handbrakeCoast: 3.2, // slow speed: no thrust at all, it just comes to a stop
   handbrakeMinSpeed: 90, // below this it only brakes, it does not swing
+  handbrakeBrakeExtra: 0.4, // extra drag when the foot brake is held with the lever
+  handbrakeThrust: 0.6, // keeping the throttle on holds the slide (a donut)
+  handbrakeSide: 0.7, // how much of the sideways slide still counts for steering
 
   // Drift: hold the button while steering to slide. A long, clean slide that
   // you release on the road is paid back as nitro and a short mini-boost.
@@ -51,6 +55,10 @@ export const Physics = {
   regenHuman: 0.015,
   regenBot: 0.045,
   nitroPickupRespawn: 12, // seconds before the same kart can collect that canister again
+
+  // A snowball covers the kart in slush: it keeps driving, just slowly.
+  snowTop: 0.55,
+  snowDrag: 0.4,
 
   // Mini-boost after a good drift
   boostTop: 1.22,
@@ -148,12 +156,62 @@ export function makeKart({
     rubber: 1, // bot rubber-banding, and 1 for every human kart
     // items (see items.js)
     item: null,
+    lastItem: null, // what the last box gave, so the next one is different
     itemRoll: 0,
     itemPending: null,
     itemHeld: 0,
     shieldTimer: 0,
     spinTimer: 0,
+    slowTimer: 0, // seconds of snow slush left (a snowball hit)
+    // pedal tuning, set from the sensitivity sliders (all 1 = stock)
+    brakeScale: 1,
+    hbTurn: 1,
+    hbFlick: 1,
+    hbDrag: 1,
   };
+}
+
+// ---------- pedal sensitivity ----------
+// Both sliders go from 1 (soft) to 10 (sharp); 5 is the tuned default. A soft
+// foot brake keeps the kart rolling when you dive into a corner, and a strong
+// handbrake swings the tail further, which is what makes a clean drift easy.
+export const SensMin = 1;
+export const SensMax = 10;
+export const SensDefault = 5;
+
+export function clampSens(value, fallback = SensDefault) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(SensMin, Math.min(SensMax, n));
+}
+
+// Multiplier for the foot brake: 0.4 (soft) .. 1 (sharp). The default is a
+// little softer than full strength, which is what lets a brake dive turn into
+// a slide instead of a stop.
+export function brakeStrength(sens = SensDefault) {
+  const s = clampSens(sens);
+  return 0.4 + ((s - SensMin) / (SensMax - SensMin)) * 0.6;
+}
+
+// Multipliers for the handbrake: how far it swings, how hard it kicks, and how
+// much speed it keeps while you hold it.
+export function handbrakeTuning(sens = SensDefault) {
+  const k = (clampSens(sens) - SensMin) / (SensMax - SensMin); // 0..1
+  return {
+    turn: 0.72 + k * 1.08,
+    flick: 0.5 + k * 1.3,
+    drag: 1.45 - k * 0.95,
+  };
+}
+
+export function applyDrivingTuning(kart, { brakeSens, handbrakeSens } = {}) {
+  if (!kart) return kart;
+  kart.brakeScale = brakeStrength(brakeSens);
+  const hb = handbrakeTuning(handbrakeSens);
+  kart.hbTurn = hb.turn;
+  kart.hbFlick = hb.flick;
+  kart.hbDrag = hb.drag;
+  return kart;
 }
 
 export function placeOnGrid(kart, track, slot) {
@@ -236,6 +294,9 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
   const P = Physics;
   // Hit by a rocket or oil: the kart spins round once, losing speed, and
   // ignores the controls until it has stopped spinning.
+  if ((kart.slowTimer ?? 0) > 0) {
+    kart.slowTimer = Math.max(0, kart.slowTimer - dt);
+  }
   if ((kart.spinTimer ?? 0) > 0) {
     kart.spinTimer = Math.max(0, kart.spinTimer - dt);
     input = { steer: 0, gas: false, brake: false, drift: false, nitro: false };
@@ -267,12 +328,14 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
   // Pulling the lever locks the back wheels: no thrust, the slide lives much
   // longer, and the nose is free to swing left or right. Off the road (or too
   // slow) it is just a brake.
+  // Measured on the total speed, not just the forward part: once the tail is
+  // out most of the velocity is sideways, and the lever must stay pulled or the
+  // kart would snap back to "crawling" in the middle of its own slide.
   const handbraking =
     canDrive &&
     !!input.handbrake &&
-    !input.brake &&
     onRoad &&
-    Math.abs(along) > P.handbrakeMinSpeed;
+    Math.hypot(kart.vx, kart.vy) > P.handbrakeMinSpeed;
 
   // --- nitro tank ---
   if (canDrive && input.nitro && !input.handbrake && kart.nitro > (kart.nitroOn ? 0 : P.nitroStartMin)) {
@@ -299,21 +362,35 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
     (onRoad ? 1 : P.offRoadFactor) *
     power *
     (kart.topScale ?? 1) *
-    rubber;
+    rubber *
+    ((kart.slowTimer ?? 0) > 0 ? P.snowTop : 1);
 
   // --- throttle / brake / handbrake ---
   if (canDrive && handbraking) {
-    along *= Math.exp(-P.handbrakeDrag * dt); // rear wheels locked, engine cut
+    // Rear wheels locked and the engine cut. Holding the foot brake as well
+    // only adds a little drag, so brake + hand together still slides instead of
+    // stopping dead: that is the combination that makes a clean drift.
+    const foot = input.brake ? P.handbrakeBrakeExtra * (kart.brakeScale ?? 1) : 0;
+    along *= Math.exp(-(P.handbrakeDrag * (kart.hbDrag ?? 1) + foot) * dt);
+    // Throttle held with the lever: the engine keeps the slide alive, so you can
+    // hold a donut instead of scrubbing to a stop.
+    if (canDrive && input.gas && !input.brake) {
+      along = Math.min(top, along + P.accel * P.handbrakeThrust * (kart.accelScale ?? 1) * dt);
+    }
   } else if (canDrive && input.handbrake) {
     along *= Math.exp(-P.handbrakeCoast * dt); // too slow to swing: it just stops
-  } else if (canDrive && (input.gas || kart.nitroOn) && !input.brake) {
+  } else if (canDrive && input.brake) {
+    // A softer brake (lower sensitivity) keeps speed for the slide.
+    along = Math.max(-P.reverseMax, along - P.brake * (kart.brakeScale ?? 1) * dt);
+  } else if (canDrive && (input.gas || kart.nitroOn)) {
     if (along < top) {
       along = Math.min(top, along + P.accel * thrust * (kart.accelScale ?? 1) * dt);
     }
-  } else if (canDrive && input.brake) {
-    along = Math.max(-P.reverseMax, along - P.brake * dt);
   } else {
     along *= Math.exp(-P.coast * dt);
+  }
+  if ((kart.slowTimer ?? 0) > 0) {
+    along *= Math.exp(-P.snowDrag * dt); // covered in snow: it drags
   }
   if (along > top) {
     along -= (along - top) * Math.min(1, 4 * dt); // grass (or the end of a boost) slows you down
@@ -354,14 +431,22 @@ export function stepKart(kart, input, dt, track, canDrive, others = []) {
   side *= Math.exp(-gripNow * (kart.grip ?? 1) * dt);
 
   // --- steering ---
-  const control = clamp(Math.abs(along) / 170, 0, 1);
+  // While the lever is pulled the kart is sliding, so the steering keeps some
+  // authority even though very little of the speed points where the nose is.
+  const controlSpeed = handbraking
+    ? Math.hypot(along, P.handbrakeSide * side)
+    : Math.abs(along);
+  const control = clamp(controlSpeed / 170, 0, 1);
   const slowDown = 1 - 0.3 * clamp(Math.abs(along) / P.maxSpeed, 0, 1);
-  const turnBoost = Math.max(drifting ? P.driftTurn : 1, handbraking ? P.handbrakeTurn : 1);
+  const turnBoost = Math.max(
+    drifting ? P.driftTurn : 1,
+    handbraking ? P.handbrakeTurn * (kart.hbTurn ?? 1) : 1,
+  );
   // A pull of the lever with the wheels turned snaps the tail round at once,
   // so the kart visibly goes right or left instead of easing into the slide.
   if (handbraking && !kart.handbraking && Math.abs(steer) > 0.2) {
     const bite = clamp(Math.abs(along) / P.maxSpeed, 0.25, 1);
-    kart.a += Math.sign(steer) * P.handbrakeFlick * bite;
+    kart.a += Math.sign(steer) * P.handbrakeFlick * (kart.hbFlick ?? 1) * bite;
   }
   kart.a +=
     steer * P.turnRate * turnBoost * control * slowDown *

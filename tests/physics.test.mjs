@@ -12,6 +12,9 @@ import {
   rubberBand,
   slipstream,
   stepKart,
+  applyDrivingTuning,
+  brakeStrength,
+  handbrakeTuning,
 } from "../src/game.js";
 
 function newKart(track, slot = 0) {
@@ -162,19 +165,20 @@ test("hitting the wall reports the impact and cancels the drift reward", () => {
 
 // A kart rolling straight ahead at a set speed, and a helper that holds an
 // input for a while and reports how far the nose turned and how much it slid.
-function rolling(speed = 400) {
+function rolling(speed = 400, tuning = null) {
   const kart = newKart(track);
+  if (tuning) applyDrivingTuning(kart, tuning);
   kart.vx = Math.cos(kart.a) * speed;
   kart.vy = Math.sin(kart.a) * speed;
   kart.speed = speed;
   return kart;
 }
 
-function hold(kart, { steer = 0, handbrake = false, gas = true, seconds = 0.3 } = {}) {
+function hold(kart, { steer = 0, handbrake = false, brake = false, gas = true, seconds = 0.3 } = {}) {
   const from = kart.a;
   let slip = 0;
   for (let i = 0; i < Math.round(seconds / FixedStep); i += 1) {
-    stepKart(kart, { steer, gas, brake: false, drift: false, nitro: false, handbrake }, FixedStep, track, true);
+    stepKart(kart, { steer, gas, brake, drift: false, nitro: false, handbrake }, FixedStep, track, true);
     const fx = Math.cos(kart.a);
     const fy = Math.sin(kart.a);
     slip = Math.max(slip, Math.abs(kart.vx * -fy + kart.vy * fx));
@@ -196,10 +200,13 @@ test("the handbrake swings the tail left or right and scrubs speed", () => {
   assert.ok(Math.abs(Math.abs(left.yaw) - pulled.yaw) < 1, "left and right swings should match");
 });
 
-test("the handbrake in a straight line only slows the kart", () => {
+test("the handbrake never steers the kart on its own", () => {
   const straight = hold(rolling(), { steer: 0, handbrake: true });
   assert.ok(Math.abs(straight.yaw) < 0.5, `the kart should not turn on its own: ${straight.yaw}`);
-  assert.ok(straight.speed < 400 && straight.speed > 250, `speed ${straight.speed}`);
+  // even with the foot brake held as well it stays in a straight line
+  const both = hold(rolling(), { steer: 0, handbrake: true, brake: true });
+  assert.ok(Math.abs(both.yaw) < 0.5, `brake + lever should not steer: ${both.yaw}`);
+  assert.ok(both.speed <= straight.speed + 1, "the lever must never add speed");
 });
 
 test("the handbrake at walking pace is just a brake", () => {
@@ -209,12 +216,51 @@ test("the handbrake at walking pace is just a brake", () => {
   assert.ok(kart.speed < 5, `the kart should stop, not swing: ${kart.speed}`);
 });
 
-test("the handbrake cuts the engine and does not burn nitro", () => {
+test("the handbrake never burns nitro", () => {
   const kart = rolling(400);
   kart.nitro = 1;
   hold(kart, { steer: 0.6, handbrake: true, gas: true, seconds: 0.4 });
-  assert.ok(kart.speed < 400, `the engine should be cut while handbraking: ${kart.speed}`);
   assert.ok(kart.nitro > 0.99, `nitro must not drain while handbraking: ${kart.nitro}`);
+});
+
+test("brake and handbrake together slide instead of stopping dead", () => {
+  const settings = { brakeSens: 5, handbrakeSens: 5 };
+  const braked = hold(rolling(450, settings), { steer: 1, brake: true, gas: false, seconds: 0.5 });
+  const lever = hold(rolling(450, settings), { steer: 1, brake: true, handbrake: true, gas: false, seconds: 0.5 });
+  assert.ok(lever.yaw > braked.yaw + 20, `brake+lever should swing more: ${lever.yaw} vs ${braked.yaw}`);
+  assert.ok(lever.speed > 150, `brake+lever should keep rolling, not stop dead: ${lever.speed}`);
+  assert.ok(lever.slip > 120, `the tail should be out: slip ${lever.slip}`);
+});
+
+test("the brake sensitivity makes the pedal soft or sharp", () => {
+  assert.ok(brakeStrength(1) < brakeStrength(5));
+  assert.ok(brakeStrength(5) < brakeStrength(10));
+  assert.ok(Math.abs(brakeStrength(10) - 1) < 1e-9, "10 is full strength");
+  const soft = hold(rolling(450, { brakeSens: 1 }), { brake: true, gas: false, seconds: 0.5 });
+  const sharp = hold(rolling(450, { brakeSens: 10 }), { brake: true, gas: false, seconds: 0.5 });
+  assert.ok(soft.speed > sharp.speed + 100, `soft ${soft.speed} vs sharp ${sharp.speed}`);
+});
+
+test("the handbrake sensitivity changes how far the tail swings", () => {
+  const gentle = handbrakeTuning(1);
+  const wild = handbrakeTuning(10);
+  assert.ok(wild.turn > gentle.turn * 2, "10 swings much further than 1");
+  assert.ok(wild.flick > gentle.flick);
+  assert.ok(wild.drag < gentle.drag, "and keeps more speed");
+  const calm = hold(rolling(450, { handbrakeSens: 1 }), { steer: 1, handbrake: true, seconds: 0.4 });
+  const sharp = hold(rolling(450, { handbrakeSens: 10 }), { steer: 1, handbrake: true, seconds: 0.4 });
+  assert.ok(sharp.yaw > calm.yaw + 10, `sharp ${sharp.yaw} vs gentle ${calm.yaw}`);
+});
+
+test("a snowball slows a kart down without spinning it", () => {
+  const snowed = rolling(500);
+  snowed.slowTimer = 1.5;
+  hold(snowed, { gas: true, seconds: 1 });
+  const clean = rolling(500);
+  hold(clean, { gas: true, seconds: 1 });
+  assert.equal(snowed.spinTimer, 0, "a snowball is not a rocket: no spin");
+  assert.ok(snowed.slowTimer < 1.5, "the slush wears off");
+  assert.ok(snowed.speed < clean.speed * 0.85, `snow should cost speed: ${snowed.speed} vs ${clean.speed}`);
 });
 
 test("slipstream is strongest right behind a fast kart in line", () => {
